@@ -437,9 +437,9 @@ function unitFor(key){return {car:'km',bike:'km',lodge:'days',own:'days',da:'day
 function money(v,cur){try{return new Intl.NumberFormat('en-IN',{style:'currency',currency:cur||'INR',minimumFractionDigits:0,maximumFractionDigits:2}).format(v)}catch(e){return (cur||'')+' '+v}}
 function fdy(iso){var p=(iso||'').split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0].slice(2):''}
 
-function expRows(list,withActs){
+function expRows(list,withActs,withClaim){
   var m=me();
-  var h='<div class="scroll"><table><thead><tr><th>ID</th><th>Traveller</th><th>Dates</th><th>Route</th><th>Section / mode</th><th>City</th><th class="num">Qty &times; rate</th><th class="num">Amount</th><th>Remarks</th><th>Status</th>'+(withActs?'<th></th>':'')+'</tr></thead><tbody>';
+  var h='<div class="scroll"><table><thead><tr><th>ID</th>'+(withClaim?'<th>Claim ID</th>':'')+'<th>Traveller</th><th>Dates</th><th>Route</th><th>Section / mode</th><th>City</th><th class="num">Qty &times; rate</th><th class="num">Amount</th><th>Remarks</th><th>Status</th>'+(withActs?'<th></th>':'')+'</tr></thead><tbody>';
   list.forEach(function(e){
     var act='';
     if(withActs){
@@ -448,7 +448,7 @@ function expRows(list,withActs){
     }
     var d1=e.dFrom||e.date,d2=e.dTo||d1,dates=d1===d2?fd(d1):fd(d1)+' to '+fd(d2);
     var route=(e.from||e.to)?esc(e.from||'-')+' &rarr; '+esc(e.to||'-'):'-';
-    h+='<tr><td class="mono">'+e.id+'</td><td>'+esc(user(e.emp).name)+'</td><td>'+dates+'</td><td>'+route+'</td><td>'+esc(e.mode||e.cat)+'</td><td>'+esc(e.city||'-')+'</td><td class="num">'+(e.qty?e.qty+' &times; '+money(e.rate,e.cur):'-')+'</td><td class="num">'+money(e.amt,e.cur)+'</td><td>'+esc(e.note||'')+'</td><td>'+statusPill(e.status)+'</td>'+(withActs?'<td>'+act+'</td>':'')+'</tr>';
+    h+='<tr><td class="mono">'+e.id+'</td>'+(withClaim?'<td class="mono">'+(e.claimId?esc(e.claimId):'-')+'</td>':'')+'<td>'+esc(user(e.emp).name)+'</td><td>'+dates+'</td><td>'+route+'</td><td>'+esc(e.mode||e.cat)+'</td><td>'+esc(e.city||'-')+'</td><td class="num">'+(e.qty?e.qty+' &times; '+money(e.rate,e.cur):'-')+'</td><td class="num">'+money(e.amt,e.cur)+'</td><td>'+esc(e.note||'')+'</td><td>'+statusPill(e.status)+'</td>'+(withActs?'<td>'+act+'</td>':'')+'</tr>';
   });
   return h+'</tbody></table></div>';
 }
@@ -767,7 +767,7 @@ function viewExpenses(){
 
   if(tab==='hist'){
     var all=visibleExp().filter(function(e){return e.status!=='Draft'}).sort(function(a,b){return (a.dFrom||a.date)<(b.dFrom||b.date)?1:-1});
-    return win(wtabs('hist')+'<h2 style="font-size:16px;margin:0 0 10px">Previous travel history'+(m.role==='employee'?'':' <small style="font-weight:400;color:var(--ink-2)">'+(m.role==='admin'?'All departments':'Your department')+'</small>')+'</h2>'+(all.length?expRows(all,m.role!=='employee'):'<p class="empty">Nothing submitted yet.</p>'));
+    return win(wtabs('hist')+'<h2 style="font-size:16px;margin:0 0 10px">Previous travel history'+(m.role==='employee'?'':' <small style="font-weight:400;color:var(--ink-2)">'+(m.role==='admin'?'All departments':'Your department')+'</small>')+'</h2>'+(all.length?expRows(all,m.role!=='employee',true):'<p class="empty">Nothing submitted yet.</p>'));
   }
 
   if(UI.step==='final'&&drafts.length)return win(finalForm());
