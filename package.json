@@ -1,0 +1,23 @@
+{
+  "name": "travel-desk",
+  "version": "1.0.0",
+  "description": "Travel requests, approvals and expense claims backed by PostgreSQL",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "db:init": "node scripts/init-db.js",
+    "db:seed": "node scripts/init-db.js --seed",
+    "start": "node server.js",
+    "user:password": "node scripts/set-password.js",
+    "setup": "node scripts/setup.js",
+    "mail:test": "node scripts/mail-test.js",
+    "user:add": "node scripts/add-user.js",
+    "user:profile": "node scripts/set-profile.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.0"
+  }
+}
