@@ -371,7 +371,7 @@ async function pmsAccess(actor, empId) {
 
 function pmsKey(body, actor) {
   const emp = text(body.emp, 20) || actor.id;
-  const type = text(body.type, 40) || 'Annual Appraisal';
+  const type = text(body.type, 40) || 'Setting New KRA';
   const year = text(body.year, 7);
   if (!PMS_TYPES.includes(type)) throw bad('Choose the appraisal type from the list.');
   const y = Number(year.slice(0, 4));

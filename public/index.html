@@ -684,7 +684,7 @@ function pmsInit(p){
 }
 function pmsOpen(emp,type,year){
   UI.pms=UI.pms||{};UI.pms.loading=true;
-  api('POST','/api/pms/open',{emp:emp||UI.uid,type:type||'Annual Appraisal',year:year||'2025-26'}).then(function(p){pmsInit(p);render()}).catch(function(e){UI.pms.loading=false;UI.pms.err=e.message||'Could not open the appraisal.';fail(e);render()});
+  api('POST','/api/pms/open',{emp:emp||UI.uid,type:type||'Setting New KRA',year:year||'2025-26'}).then(function(p){pmsInit(p);render()}).catch(function(e){UI.pms.loading=false;UI.pms.err=e.message||'Could not open the appraisal.';fail(e);render()});
 }
 function fd(iso){return iso?iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4):''}
 function pmsRowHtml(r,i,can){
