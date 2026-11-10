@@ -730,7 +730,7 @@ function viewPms(){
   var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><button class="wbtn" type="button" data-act="pms-save"'+(p.blocked?' disabled':'')+'>Save</button><button class="wbtn" type="button" data-act="pms-add"'+(p.blocked?' disabled':'')+'>Add</button>'+
     '<span class="pmsg" id="pms-msg" role="status">'+esc(P.msg||role)+'</span>'+
     '<span class="ptot">Total = <input class="wf" id="pms-w" readonly aria-label="Total weightage" value="'+tt.w.toFixed(2)+'"'+(Math.abs(tt.w-100)>0.001?' style="color:var(--bad)"':'')+'></span>'+
-    '<span class="ptot">Score <input class="wf" id="pms-s" readonly aria-label="Total score" value="'+tt.score.toFixed(2)+'"><input class="wf" id="pms-s5" readonly title="Rating out of 5 = score / 20" aria-label="Rating out of 5" value="'+(tt.score/20).toFixed(4)+'"></span></div>';
+    '<span class="ptot">Score <input class="wf" id="pms-s" readonly aria-label="Total score" value="'+tt.score.toFixed(2)+'"><input class="wf" id="pms-s5" readonly title="Final score = Total score / 100 &times; 80" aria-label="Final score" value="'+(tt.score/100*80).toFixed(2)+'"></span></div>';
   setTimeout(pmsStick,0);
   return win(tabs+hdr+grid+foot,'KRA');
 }
@@ -747,7 +747,7 @@ function pmsEdit(el){
   if(a)a.textContent=c.pct.toFixed(2);if(b)b.textContent=c.score.toFixed(2);
   var t=pmsTotals(),w=document.getElementById('pms-w'),s=document.getElementById('pms-s'),s5=document.getElementById('pms-s5');
   if(w){w.value=t.w.toFixed(2);w.style.color=Math.abs(t.w-100)>0.001?'var(--bad)':''}
-  if(s)s.value=t.score.toFixed(2);if(s5)s5.value=(t.score/20).toFixed(4);
+  if(s)s.value=t.score.toFixed(2);if(s5)s5.value=(t.score/100*80).toFixed(2);
   pmsMsg('');
 }
 function pmsMsg(t){if(UI.pms)UI.pms.msg=t;var e=document.getElementById('pms-msg');if(e)e.textContent=t}
