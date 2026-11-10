@@ -692,11 +692,11 @@ function pmsRowHtml(r,i,can){
   var inp=function(f,v,ed,extra){return '<input class="kin" data-kf="'+f+'" data-i="'+i+'" value="'+esc(v)+'"'+ro(ed)+(extra||'')+'>'};
   var sel='<select class="kin" data-kf="timeline" data-i="'+i+'"'+(goal?'':' disabled')+'>'+PMS_TIMELINES.map(function(t){return '<option'+(r.timeline===t?' selected':'')+'>'+t+'</option>'}).join('')+'</select>';
   return '<tr data-row="'+i+'"><td class="kc"><div>'+(i+1<10?'0':'')+(i+1)+'</div>'+(goal?'<button type="button" class="linkbtn kdel" data-act="pms-del" data-id="'+i+'" title="Remove this row" aria-label="Remove row '+(i+1)+'">&times;</button>':'')+'</td>'+
-    '<td><textarea class="kin kta" data-kf="kra" data-i="'+i+'" rows="3"'+ro(goal)+' aria-label="Key Result Area '+(i+1)+'">'+esc(r.kra)+'</textarea></td>'+
+    '<td><textarea class="kin kta" data-kf="kra" data-i="'+i+'" rows="2"'+ro(goal)+' aria-label="Key Result Area '+(i+1)+'">'+esc(r.kra)+'</textarea></td>'+
     '<td>'+inp('source',r.source,goal)+'</td><td>'+inp('threshold',r.threshold,goal,' inputmode="decimal"')+'</td><td>'+inp('target',r.target,goal,' inputmode="decimal"')+'</td><td>'+inp('weight',r.weight,goal,' inputmode="decimal"')+'</td>'+
     '<td>'+sel+'</td><td>'+inp('selfAch',r.selfAch,can.self&&can.rate,' inputmode="decimal"')+'</td><td>'+inp('mgrAch',r.mgrAch,can.mgr&&can.rate,' inputmode="decimal"')+'</td>'+
     '<td class="kn" id="kp'+i+'">'+c.pct.toFixed(2)+'</td><td class="kn" id="ks'+i+'">'+c.score.toFixed(2)+'</td>'+
-    '<td><textarea class="kin kta" data-kf="remarks" data-i="'+i+'" rows="3"'+ro(goal)+' aria-label="Specific remarks '+(i+1)+'">'+esc(r.remarks)+'</textarea></td></tr>';
+    '<td><textarea class="kin kta" data-kf="remarks" data-i="'+i+'" rows="2"'+ro(goal)+' aria-label="Specific remarks '+(i+1)+'">'+esc(r.remarks)+'</textarea></td></tr>';
 }
 function pmsTotals(){
   var rows=UI.pms.rows,w=0,sc=0;rows.forEach(function(r,i){w+=pnum(r.weight)||0;sc+=pmsCalc(r).score});
