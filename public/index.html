@@ -731,9 +731,17 @@ function viewPms(){
     '<span class="pmsg" id="pms-msg" role="status">'+esc(P.msg||role)+'</span>'+
     '<span class="ptot">Total = <input class="wf" id="pms-w" readonly aria-label="Total weightage" value="'+tt.w.toFixed(2)+'"'+(Math.abs(tt.w-100)>0.001?' style="color:var(--bad)"':'')+'></span>'+
     '<span class="ptot">Score <input class="wf" id="pms-s" readonly aria-label="Total score" value="'+tt.score.toFixed(2)+'"><input class="wf" id="pms-s5" readonly title="Final score = Total score / 100 &times; 80" aria-label="Final score" value="'+(tt.score/100*80).toFixed(2)+'"></span></div>';
-  setTimeout(pmsStick,0);
+  setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsStick();pmsFit()},0);
   return win(tabs+hdr+grid+foot,'KRA');
 }
+// Stretch the grid so the Save / Add / Total row ends just above the bottom of the screen (the taskbar), whatever the screen size or zoom.
+function pmsFit(){
+  var g=document.querySelector('.kscroll');if(!g)return;
+  var w=g.closest('.win'),room=window.innerHeight-(w||g).getBoundingClientRect().bottom-8;
+  var h=Math.max(230,g.getBoundingClientRect().height+room);
+  g.style.height=h+'px';
+}
+window.addEventListener('resize',function(){var g=document.querySelector('.kscroll');if(g){g.style.height='';pmsFit()}});
 function pmsStick(){
   var a=document.querySelector('.kgrid tr.kl'),b=document.querySelector('.kgrid tr.kh'),c=document.querySelector('.kgrid tr.ks');if(!a||!b||!c)return;
   var h1=a.getBoundingClientRect().height,h2=b.getBoundingClientRect().height;
@@ -837,6 +845,7 @@ function render(){
     tabs.push(['center','Approval Center'],['expenses','Expenses'],['policy','Policy and budgets']);
     if(!tabs.some(function(t){return t[0]===UI.tab}))UI.tab='overview';
   }
+  var ft=document.querySelector('.foot');if(ft)ft.style.display=UI.mod==='pms'?'none':'';document.body.style.paddingBottom=UI.mod==='pms'?'6px':'';
   document.getElementById('brandh').textContent=UI.mod==='pms'?'Performance':'Travel Desk';
   document.getElementById('brands').textContent=UI.mod==='pms'?'Goals, appraisals and ratings':'Requests, approvals and expenses';
   document.getElementById('mods').innerHTML=[['travel','Travel Desk'],['pms','Performance']].map(function(x){return '<button type="button" class="modb" data-act="mod" data-v="'+x[0]+'" aria-pressed="'+(UI.mod===x[0])+'">'+x[1]+'</button>'}).join('');
