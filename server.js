@@ -397,9 +397,9 @@ async function pmsPayload(actor, empId, type, year) {
   const a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
   let kras = a ? (await q(`SELECT id::text AS id, sno, kra, source, threshold, target, weight, timeline, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks
                              FROM pms_kras WHERE appraisal_id = $1 ORDER BY sno, id`, [a.id])).rows : [];
-  // Mid-year and annual forms start from the goals already set (no ratings); they are stored when the form is saved.
+  // Mid-year and annual forms start from everything already entered (goals, ratings, remarks), the Annual one from the Mid Year form; they are stored when the form is saved.
   if (!kras.length && type !== 'Setting New KRA' && no) {
-    kras = (await q(`SELECT NULL::text AS id, ${KRA_COLS}, NULL::numeric AS "selfAch", NULL::numeric AS "mgrAch", ''::text AS remarks FROM pms_kras k
+    kras = (await q(`SELECT NULL::text AS id, ${KRA_COLS}, k.self_ach AS "selfAch", k.mgr_ach AS "mgrAch", k.remarks FROM pms_kras k
                       WHERE k.appraisal_id = (SELECT p.id FROM pms_appraisals p WHERE p.emp = $1 AND p.year = $2 AND p.type IN ('Setting New KRA', 'Mid Year Appraisal') AND p.type <> $3
                                                ORDER BY CASE p.type WHEN 'Mid Year Appraisal' THEN 1 ELSE 2 END LIMIT 1) ORDER BY k.sno`, [empId, year, type])).rows;
   }
@@ -425,6 +425,13 @@ route('POST', '/api/pms/save', async ({ actor, body }) => {
   const list = Array.isArray(body.kras) ? body.kras.slice(0, 50) : [];
   const old = {};
   if (a) (await q(`SELECT id::text AS id, self_ach, mgr_ach FROM pms_kras WHERE appraisal_id = $1`, [a.id])).rows.forEach((r) => { old[r.id] = r; });
+  // A form that has no rows of its own yet starts from the Mid Year (else Setting New KRA) rows: keep their ratings by serial number.
+  const src = {};
+  if (!Object.keys(old).length && rate) {
+    (await q(`SELECT k.sno, k.self_ach, k.mgr_ach FROM pms_kras k
+               WHERE k.appraisal_id = (SELECT p.id FROM pms_appraisals p WHERE p.emp = $1 AND p.year = $2 AND p.type IN ('Setting New KRA', 'Mid Year Appraisal') AND p.type <> $3
+                                        ORDER BY CASE p.type WHEN 'Mid Year Appraisal' THEN 1 ELSE 2 END LIMIT 1)`, [k.emp, k.year, k.type])).rows.forEach((r) => { src[r.sno] = r; });
+  }
   const num = (v, label) => {
     if (v === '' || v == null) return null;
     const n = Number(v);
@@ -433,7 +440,7 @@ route('POST', '/api/pms/save', async ({ actor, body }) => {
   };
   let total = 0;
   const rows = list.map((r, i) => {
-    const o = old[String(r && r.id)] || {};
+    const o = old[String(r && r.id)] || (r && r.id == null ? src[Number(r.sno) || i + 1] : null) || {};
     const threshold = num(r.threshold, 'Threshold');
     if (threshold != null && threshold > 100) throw bad('Threshold cannot be more than 100%.');
     const weight = num(r.weight, 'Weightage') || 0;

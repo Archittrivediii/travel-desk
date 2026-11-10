@@ -680,7 +680,7 @@ function pmsCalc(r){
 function pmsInit(p){
   UI.pms=UI.pms||{};UI.pms.p=p;UI.pms.dirty=false;UI.pms.loading=false;UI.pms.err='';UI.pms.msg='';
   UI.pms.emp=p.employee.id;UI.pms.type=p.appraisal.type;UI.pms.year=p.appraisal.year;
-  UI.pms.rows=p.kras.map(function(k){return {id:k.id,kra:k.kra,source:k.source,threshold:pnum(k.threshold)==null?'':pnum(k.threshold),target:pnum(k.target)==null?'':pnum(k.target),weight:pnum(k.weight)==null?'':pnum(k.weight),timeline:k.timeline,selfAch:pnum(k.selfAch)==null?'':pnum(k.selfAch),mgrAch:pnum(k.mgrAch)==null?'':pnum(k.mgrAch),remarks:k.remarks}});
+  UI.pms.rows=p.kras.map(function(k){return {id:k.id,sno:k.sno,kra:k.kra,source:k.source,threshold:pnum(k.threshold)==null?'':pnum(k.threshold),target:pnum(k.target)==null?'':pnum(k.target),weight:pnum(k.weight)==null?'':pnum(k.weight),timeline:k.timeline,selfAch:pnum(k.selfAch)==null?'':pnum(k.selfAch),mgrAch:pnum(k.mgrAch)==null?'':pnum(k.mgrAch),remarks:k.remarks}});
 }
 function pmsOpen(emp,type,year){
   UI.pms=UI.pms||{};UI.pms.loading=true;
