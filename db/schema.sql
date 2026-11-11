@@ -207,3 +207,52 @@ ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS cycle_no text;
 UPDATE pms_appraisals a SET cycle_no = (SELECT min(b.id) FROM pms_appraisals b WHERE b.emp = a.emp AND b.year = a.year) WHERE a.cycle_no IS NULL;
 CREATE INDEX IF NOT EXISTS pms_appraisals_emp_year_idx ON pms_appraisals (emp, year);
 
+-- PMS Page 2 (values assessment): the master list of attributes can be edited by the admin at any time.
+-- Every appraisal keeps its own copy of the list (pms_value_rows) so that old appraisals do not change.
+CREATE TABLE IF NOT EXISTS pms_settings (key text PRIMARY KEY, value text NOT NULL);
+CREATE TABLE IF NOT EXISTS pms_value_master (
+  id    serial PRIMARY KEY,
+  ord   int  NOT NULL,
+  lvl   int  NOT NULL CHECK (lvl IN (1, 2, 3)),   -- 1 = main value, 2 = sub heading, 3 = behaviour line
+  code  text NOT NULL DEFAULT '',
+  label text NOT NULL,
+  marks numeric CHECK (marks IS NULL OR marks >= 0)  -- empty = heading only, nothing to rate
+);
+CREATE TABLE IF NOT EXISTS pms_value_rows (
+  id           bigserial PRIMARY KEY,
+  appraisal_id text NOT NULL REFERENCES pms_appraisals(id) ON DELETE CASCADE,
+  ord          int  NOT NULL,
+  lvl          int  NOT NULL,
+  code         text NOT NULL DEFAULT '',
+  label        text NOT NULL,
+  marks        numeric,
+  self_ach     numeric,
+  mgr_ach      numeric,
+  remarks      text NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS pms_value_rows_idx ON pms_value_rows (appraisal_id, ord);
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS values_weight numeric;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pms_settings WHERE key = 'values_seeded') THEN
+    INSERT INTO pms_value_master (ord, lvl, code, label, marks) VALUES
+      (1, 1, '1', 'Integrity', NULL),
+      (2, 2, 'A', 'Commitment:', NULL),
+      (3, 3, '', '* Keeps and honors work promises and timelines', 2.5),
+      (4, 3, '', '* Proactively communicated revised timelines without being asked.', 2.5),
+      (5, 2, 'B', 'Responsibility:', NULL),
+      (6, 3, '', '* Takes responsibility for actions', 2.5),
+      (7, 3, '', '* Makes right the impact of any adverse result due to actions taken.', 2.5),
+      (8, 1, '2', 'Entrepreneurship', NULL),
+      (9, 2, 'A', 'Initiative:', NULL),
+      (10, 3, '', '* Does things before being asked or being forced by events', 1.5),
+      (11, 3, '', '* Identifies and acts on opportunities for improvement in his area of work', 1.5),
+      (12, 2, 'B', 'Planning: Plans work systematically, anticipates obstacles, evaluates alternatives.', 3),
+      (13, 2, 'C', 'Work:', NULL),
+      (14, 3, '', '* Performs high quality work on a regular basis', 1.5),
+      (15, 3, '', '* Takes repeated / different action to achieve result/overcome obstacle', 1.5),
+      (16, 2, 'D', 'Efficiency:Looks for / finds ways to do things faster at less cost without affecting timelines or quality.', 3),
+      (17, 2, 'E', 'Problem Solving:Generates new solutions, switches to alternative strategy to reach goals.', 3);
+    INSERT INTO pms_settings (key, value) VALUES ('values_weightage', '20'), ('values_seeded', '1');
+  END IF;
+END $$;

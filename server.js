@@ -394,7 +394,7 @@ async function pmsPayload(actor, empId, type, year) {
                           FROM users u LEFT JOIN users m ON m.id = u.reporting_to WHERE u.id = $1`, [empId])).rows[0];
   const team = (await q(`SELECT id, name FROM users WHERE reporting_to = $1 ORDER BY name`, [actor.id])).rows;
   const no = await pmsNumber(empId, year);
-  const a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
+  const a = (await q(`SELECT id, status, values_weight FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
   let kras = a ? (await q(`SELECT id::text AS id, sno, kra, source, threshold, target, weight, timeline, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks
                              FROM pms_kras WHERE appraisal_id = $1 ORDER BY sno, id`, [a.id])).rows : [];
   // Mid-year and annual forms start from everything already entered (goals, ratings, remarks), the Annual one from the Mid Year form; they are stored when the form is saved.
@@ -404,7 +404,33 @@ async function pmsPayload(actor, empId, type, year) {
                                                ORDER BY CASE p.type WHEN 'Mid Year Appraisal' THEN 1 ELSE 2 END LIMIT 1) ORDER BY k.sno`, [empId, year, type])).rows;
   }
   const blocked = type !== 'Setting New KRA' && !no ? 'Set and save the KRAs for this year first (choose Type: Setting New KRA).' : '';
-  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked };
+  const values = await pmsValues(empId, type, year, a);
+  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values };
+}
+
+
+// ----- Page 2: values assessment -----
+async function valuesMaster() {
+  const w = (await q(`SELECT value FROM pms_settings WHERE key = 'values_weightage'`)).rows[0];
+  const rows = (await q(`SELECT ord, lvl, code, label, marks FROM pms_value_master ORDER BY ord, id`)).rows;
+  return { weight: w ? Number(w.value) : 20, rows: rows.map((r, i) => ({ ...r, ord: i + 1 })) };
+}
+const VAL_COLS = `ord, lvl, code, label, marks, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks`;
+// The list of attributes for one appraisal: its own copy if it was saved, else (Annual) the Mid Year copy, else the master list.
+async function valuesBase(emp, year, type, a) {
+  const own = a ? (await q(`SELECT ${VAL_COLS} FROM pms_value_rows WHERE appraisal_id = $1 ORDER BY ord`, [a.id])).rows : [];
+  if (own.length) return { weight: a.values_weight == null ? (await valuesMaster()).weight : Number(a.values_weight), rows: own, stored: true };
+  if (type === 'Annual Appraisal') {
+    const m = (await q(`SELECT id, values_weight FROM pms_appraisals WHERE emp = $1 AND year = $2 AND type = 'Mid Year Appraisal'`, [emp, year])).rows[0];
+    const rows = m ? (await q(`SELECT ${VAL_COLS} FROM pms_value_rows WHERE appraisal_id = $1 ORDER BY ord`, [m.id])).rows : [];
+    if (rows.length) return { weight: m.values_weight == null ? (await valuesMaster()).weight : Number(m.values_weight), rows, stored: false };
+  }
+  const mm = await valuesMaster();
+  return { weight: mm.weight, rows: mm.rows.map((r) => ({ ...r, selfAch: null, mgrAch: null, remarks: '' })), stored: false };
+}
+async function pmsValues(emp, type, year, a) {
+  const b = await valuesBase(emp, year, type, a);
+  return { weight: b.weight, rows: b.rows };
 }
 
 // Opens a form. Nothing is created and no number is used by just looking.
@@ -477,6 +503,84 @@ route('POST', '/api/pms/save', async ({ actor, body }) => {
     [a.id, JSON.stringify(rows)]);
   await q(`UPDATE pms_appraisals SET updated_at = now() WHERE id = $1`, [a.id]);
   return pmsPayload(actor, k.emp, k.type, k.year);
+});
+
+// Saves the ratings of Page 2. The appraisee can change the self rating, the manager the manager rating and the remarks.
+// The list of attributes itself is never taken from the browser: it is copied from the master list (or the Mid Year form).
+route('POST', '/api/pms/values/save', async ({ actor, body }) => {
+  const k = pmsKey(body, actor);
+  if (k.type === 'Setting New KRA') throw bad('Ratings are entered in the Mid Year and Annual appraisals.');
+  const acc = await pmsAccess(actor, k.emp);
+  const no = await pmsNumber(k.emp, k.year);
+  if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (choose Type: Setting New KRA).');
+  let a = (await q(`SELECT id, status, values_weight FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  if (a && a.status !== 'Draft') throw new HttpError(409, 'This appraisal is locked.');
+  const base = await valuesBase(k.emp, k.year, k.type, a);
+  const sent = {};
+  (Array.isArray(body.rows) ? body.rows : []).forEach((r) => { if (r) sent[Number(r.ord)] = r; });
+  const num = (v, max, label) => {
+    if (v === '' || v == null) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) throw bad(label + ' must be a number, 0 or more.');
+    if (n > max + 1e-9) throw bad(label + ' cannot be more than the marks (' + max + ').');
+    return n;
+  };
+  const keep = (v) => (v == null ? null : Number(v));
+  const rows = base.rows.map((b) => {
+    const r = sent[b.ord] || {}, rateable = b.marks != null, max = rateable ? Number(b.marks) : 0;
+    return {
+      ord: b.ord, lvl: b.lvl, code: b.code, label: b.label, marks: rateable ? max : null,
+      self_ach: acc.self && rateable && 'selfAch' in r ? num(r.selfAch, max, 'Self rating') : keep(b.selfAch),
+      mgr_ach: acc.mgr && rateable && 'mgrAch' in r ? num(r.mgrAch, max, 'Manager rating') : keep(b.mgrAch),
+      remarks: acc.mgr && 'remarks' in r ? text(r.remarks, 1000) : (b.remarks || ''),
+    };
+  });
+  if (!a) {
+    const id = no + '-' + (k.type === 'Mid Year Appraisal' ? 'M' : 'A');
+    await q(`INSERT INTO pms_appraisals (id, emp, type, year, cycle_no) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (emp, type, year) DO NOTHING`, [id, k.emp, k.type, k.year, no]);
+    a = (await q(`SELECT id, status, values_weight FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  }
+  await q(`WITH d AS (DELETE FROM pms_value_rows WHERE appraisal_id = $1::text)
+          INSERT INTO pms_value_rows (appraisal_id, ord, lvl, code, label, marks, self_ach, mgr_ach, remarks)
+          SELECT $1::text, x.ord, x.lvl, x.code, x.label, x.marks, x.self_ach, x.mgr_ach, x.remarks
+            FROM jsonb_to_recordset($2::jsonb) AS x(ord int, lvl int, code text, label text, marks numeric, self_ach numeric, mgr_ach numeric, remarks text)`,
+    [a.id, JSON.stringify(rows)]);
+  await q(`UPDATE pms_appraisals SET values_weight = $2, updated_at = now() WHERE id = $1`, [a.id, base.weight]);
+  return pmsPayload(actor, k.emp, k.type, k.year);
+});
+
+route('GET', '/api/pms/values/master', async ({ actor }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the list of attributes.');
+  return valuesMaster();
+});
+
+// The master list of attributes. Only the admin can change it; appraisals that already have their own copy are not affected.
+route('PUT', '/api/pms/values/master', async ({ actor, body }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the list of attributes.');
+  const list = Array.isArray(body.rows) ? body.rows.slice(0, 200) : [];
+  const weight = Number(body.weight);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 100) throw bad('Weightage must be between 0 and 100.');
+  let any = false;
+  const rows = list.map((r, i) => {
+    const lvl = Number(r && r.lvl);
+    if (![1, 2, 3].includes(lvl)) throw bad('Row ' + (i + 1) + ': choose the level.');
+    const label = text(r.label, 400);
+    if (!label) throw bad('Row ' + (i + 1) + ': enter the text.');
+    let marks = null;
+    if (r.marks !== '' && r.marks != null) {
+      marks = Number(r.marks);
+      if (!Number.isFinite(marks) || marks < 0 || marks > 100) throw bad('Row ' + (i + 1) + ': marks must be between 0 and 100.');
+      any = true;
+    }
+    return { ord: i + 1, lvl, code: text(r.code, 10), label, marks };
+  });
+  if (!any) throw bad('Give marks to at least one line, otherwise there is nothing to rate.');
+  await q(`WITH d AS (DELETE FROM pms_value_master),
+               s AS (INSERT INTO pms_settings (key, value) VALUES ('values_weightage', $2::text) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value)
+          INSERT INTO pms_value_master (ord, lvl, code, label, marks)
+          SELECT x.ord, x.lvl, x.code, x.label, x.marks FROM jsonb_to_recordset($1::jsonb) AS x(ord int, lvl int, code text, label text, marks numeric)`,
+    [JSON.stringify(rows), String(weight)]);
+  return valuesMaster();
 });
 
 route('PUT', '/api/policy/:grade', async ({ actor, params, body }) => {

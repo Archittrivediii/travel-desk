@@ -233,6 +233,23 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .ptabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--wline);margin-top:4px}
 .ptab{font:inherit;font-size:11px;padding:4px 10px;border:1px solid var(--wgrid);border-bottom:0;background:var(--wlabel);color:var(--ink);cursor:pointer}
 .ptab.on{background:var(--wfield);font-weight:700}.ptab:disabled{color:var(--ink-2);cursor:not-allowed}
+.vgrid{min-width:760px}
+.vgrid th{top:0;border-bottom:2px solid var(--wstrong)}
+.vgrid td.vl{padding:4px 6px;line-height:1.3}
+.vgrid tr.v1 td{background:#cfe6a4;color:#1b2a05;font-weight:700}
+.vgrid tr.v2 td{background:var(--wlabel)}
+.vgrid tr.v3 td{background:var(--wlabel)}
+.vgrid tr.v3 td.vl{padding-left:14px}
+.vgrid tr.v1 td.kc,.vgrid tr.v2 td.kc{font-weight:700}
+.vgrid td.kn{text-align:right;padding:2px 8px}
+.vgrid .vin{text-align:right;background:var(--wfield)}
+.vgrid .vin[readonly]{background:var(--wlabel)}
+.vgrid .kin.bad{outline:2px solid var(--bad);outline-offset:-2px}
+.vgrid .kta{background:var(--wfield)}.vgrid .kta[readonly]{background:var(--wlabel)}
+.vedit .kin{background:var(--wfield);border:0}
+.vedit td{padding:1px}
+.vedit .vbtn{font:inherit;font-size:13px;line-height:1;padding:2px 6px;border:1px solid var(--wgrid);background:var(--wlabel);color:var(--ink);cursor:pointer}
+.pfoot .pnote{flex:1;min-width:160px}
 .kscroll{overflow:auto;height:calc(100vh - 335px);min-height:230px;border:1px solid var(--wline);background:var(--wfield)}
 .kgrid{border-collapse:collapse;table-layout:fixed;width:100%;min-width:1000px;font-size:11px}
 .kgrid th{text-transform:none;letter-spacing:0;white-space:normal;overflow-wrap:anywhere;position:sticky;background:var(--kh);color:var(--khi);font-weight:600;font-size:10.5px;padding:2px 4px;border:1px solid var(--wgrid);vertical-align:middle;line-height:1.25}
@@ -680,6 +697,8 @@ function pmsCalc(r){
 function pmsInit(p){
   UI.pms=UI.pms||{};UI.pms.p=p;UI.pms.dirty=false;UI.pms.loading=false;UI.pms.err='';UI.pms.msg='';
   UI.pms.emp=p.employee.id;UI.pms.type=p.appraisal.type;UI.pms.year=p.appraisal.year;
+  UI.pms.vrows=((p.values&&p.values.rows)||[]).map(function(r){return {ord:r.ord,lvl:r.lvl,code:r.code||'',label:r.label,marks:pnum(r.marks),selfAch:pnum(r.selfAch)==null?'':pnum(r.selfAch),mgrAch:pnum(r.mgrAch)==null?'':pnum(r.mgrAch),remarks:r.remarks||''}});
+  UI.pms.vweight=p.values&&p.values.weight!=null?Number(p.values.weight):20;UI.pms.page=UI.pms.page||1;UI.pms.editor=null;
   UI.pms.rows=p.kras.map(function(k){return {id:k.id,sno:k.sno,kra:k.kra,source:k.source,threshold:pnum(k.threshold)==null?'':pnum(k.threshold),target:pnum(k.target)==null?'':pnum(k.target),weight:pnum(k.weight)==null?'':pnum(k.weight),timeline:k.timeline,selfAch:pnum(k.selfAch)==null?'':pnum(k.selfAch),mgrAch:pnum(k.mgrAch)==null?'':pnum(k.mgrAch),remarks:k.remarks}});
 }
 function pmsOpen(emp,type,year){
@@ -720,7 +739,8 @@ function viewPms(){
     '<div class="phl">Designation:</div><input class="wf phv" readonly aria-label="Designation" value="'+esc(e.desig)+'">'+
     '<div class="phl">Reporting Manager:</div><input class="wf phv" readonly aria-label="Reporting Manager" value="'+esc(e.manager)+'">'+
     '<div class="phl">Date of Joining</div><input class="wf phv" readonly aria-label="Date of Joining" value="'+esc(fd(e.doj))+'"></div>';
-  var tabs='<div class="ptabs">'+PMS_PAGES.map(function(t,i){return '<button type="button" class="ptab'+(i===0?' on':'')+'"'+(i===0?'':' disabled title="Coming soon"')+'>'+esc(t)+'</button>'}).join('')+'</div>';
+  var tabs='<div class="ptabs">'+PMS_PAGES.map(function(t,i){var live=i<2;return '<button type="button" class="ptab'+(i+1===P.page?' on':'')+'"'+(live?' data-act="pms-page" data-v="'+(i+1)+'"':' disabled title="Coming soon"')+'>'+esc(t)+'</button>'}).join('')+'</div>';
+  if(P.page===2)return win(tabs+hdr+viewPmsValues(P,p,can),'KRA');
   var cols=[3,24,8,6,7,6,8,8,8,6,6,10];
   var th='<thead><tr class="kl">'+'ABCDEFGHIJKL'.split('').map(function(l){return '<th>('+l+')</th>'}).join('')+'</tr><tr class="kh"><th></th><th>Key Result Area\'s (Quantitative Goals)</th><th>Source</th><th>Threshold</th><th>Planned Achievement /Target</th><th>Weightage of the KRA</th><th>Timeline/ Periodicity</th><th>Actual Self rating</th><th>Actual Manager rating</th><th>% age</th><th>Score</th><th>Specific Remarks</th></tr>'+
     '<tr class="ks"><th>S. No</th><th></th><th>WFX/Excel Sheet/ E-mails/ Files/ Hardcopy Record etc.</th><th>% achievement below which score will be zero.</th><th>INR/USD/ %age/ Score/ Raw numbers</th><th>Total = 100%</th><th>Monthly/Daily/ H1/H2/ Yearly/ ongoing</th><th>Achievement (As per appraisee)</th><th>Achievement (As per Appraiser)</th><th>Achievement in %age</th><th>Net score</th><th></th></tr></thead>';
@@ -733,6 +753,49 @@ function viewPms(){
     '<span class="ptot">Score <input class="wf" id="pms-s" readonly aria-label="Total score" value="'+tt.score.toFixed(2)+'"><input class="wf" id="pms-s5" readonly title="Final score = Total score / 100 &times; 80" aria-label="Final score" value="'+(tt.score/100*80).toFixed(2)+'"></span></div>';
   setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsStick();pmsFit()},0);
   return win(tabs+hdr+grid+foot,'KRA');
+}
+
+function pmsValTotals(){
+  var P=UI.pms,max=0,s=0,m=0,eff=0;
+  P.vrows.forEach(function(r){if(r.marks==null)return;max+=Number(r.marks);var a=pnum(r.selfAch),b=pnum(r.mgrAch);s+=a||0;m+=b||0;eff+=(b!=null?b:(a||0))});
+  return {max:max,self:s,mgr:m,w:max?eff/max*P.vweight:0};
+}
+function pmsValRow(r,i,can){
+  var rate=r.marks!=null,cls=r.lvl===1?'v1':r.lvl===2?'v2':'v3',bad=function(v){var n=pnum(v);return n!=null&&(n<0||n>Number(r.marks))};
+  var inp=function(f,v,ed){return rate?'<input class="kin vin'+(bad(v)?' bad':'')+'" data-vf="'+f+'" data-i="'+i+'" value="'+esc(v)+'"'+(ed?'':' readonly tabindex="-1"')+' inputmode="decimal" aria-label="'+(f==='selfAch'?'Self rating':'Manager rating')+' for '+esc(r.label)+'">':''};
+  return '<tr class="'+cls+'"><td class="kc">'+esc(r.code)+'</td><td class="vl">'+esc(r.label)+'</td><td class="kn">'+(rate?Number(r.marks).toFixed(2):'')+'</td>'+
+    '<td>'+inp('selfAch',r.selfAch,can.self&&can.rate)+'</td><td>'+inp('mgrAch',r.mgrAch,can.mgr&&can.rate)+'</td>'+
+    '<td>'+(rate?'<textarea class="kin kta" rows="1" data-vf="remarks" data-i="'+i+'"'+(can.mgr&&can.rate?'':' readonly tabindex="-1"')+' aria-label="Remarks for '+esc(r.label)+'">'+esc(r.remarks)+'</textarea>':'')+'</td></tr>';
+}
+function viewPmsValues(P,p,can){
+  setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsFit()},0);
+  if(P.editor)return viewPmsEditor(P);
+  var t=pmsValTotals(),isAdmin=me().role==='admin';
+  var th='<thead><tr><th>S. No</th><th>B - Qualitative Attributes ( Weightage : '+esc(String(P.vweight))+' )</th><th>Marks</th><th>Actual Self Rating</th><th>Actual Manager Rating</th><th>Reporting Manager\'s Remarks wrt to attribute</th></tr></thead>';
+  var body=P.vrows.map(function(r,i){return pmsValRow(r,i,can)}).join('')||'<tr><td colspan="6" class="emptyc">No attributes are set up yet.</td></tr>';
+  var grid='<div class="kscroll"><table class="kgrid vgrid"><colgroup><col style="width:5%"><col style="width:43%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:26%"></colgroup>'+th+'<tbody>'+body+'</tbody></table></div>';
+  var role=p.blocked?p.blocked:!can.rate?'Ratings for the values are entered in the Mid Year and Annual appraisals.':can.self&&!can.mgr?'You can enter your self rating (not more than the marks of each line).':(can.mgr?'You are the reporting manager: you can enter the manager rating and your remarks.':'');
+  var off=(p.blocked||!can.rate)?' disabled':'';
+  var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><button class="wbtn" type="button" data-act="pms-save"'+off+'>Save</button>'+
+    (isAdmin?'<button class="wbtn" type="button" data-act="ve-open">Edit attributes</button>':'')+
+    '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||role)+'</span>'+
+    '<span class="ptot">Score ( out of max <span id="pv-maxl">'+t.max.toFixed(2).replace(/\.00$/,'')+'</span> ) <input class="wf" id="pv-max" readonly aria-label="Total marks" value="'+t.max.toFixed(2)+'"><input class="wf" id="pv-self" readonly aria-label="Total self rating" value="'+t.self.toFixed(2)+'"><input class="wf" id="pv-mgr" readonly aria-label="Total manager rating" value="'+t.mgr.toFixed(2)+'"><input class="wf" id="pv-w" readonly title="Weighted score out of '+esc(String(P.vweight))+' = manager rating (self rating where there is none) / total marks x '+esc(String(P.vweight))+'" aria-label="Weighted score" value="'+t.w.toFixed(2)+'"></span></div>';
+  return grid+foot;
+}
+function viewPmsEditor(P){
+  var E=P.editor,lv=function(v){return [[1,'Main value'],[2,'Sub heading'],[3,'Behaviour line']].map(function(o){return '<option value="'+o[0]+'"'+(o[0]===v?' selected':'')+'>'+o[1]+'</option>'}).join('')};
+  var rows=E.rows.map(function(r,i){return '<tr><td><select class="kin" data-ef="lvl" data-i="'+i+'" aria-label="Level">'+lv(r.lvl)+'</select></td>'+
+    '<td><input class="kin" data-ef="code" data-i="'+i+'" value="'+esc(r.code)+'" maxlength="10" aria-label="S. No"></td>'+
+    '<td><input class="kin" data-ef="label" data-i="'+i+'" value="'+esc(r.label)+'" maxlength="400" aria-label="Text"></td>'+
+    '<td><input class="kin" style="text-align:right" data-ef="marks" data-i="'+i+'" value="'+esc(r.marks==null?'':r.marks)+'" inputmode="decimal" aria-label="Marks"></td>'+
+    '<td class="kc" style="white-space:nowrap"><button type="button" class="vbtn" data-act="ve-up" data-id="'+i+'" title="Move up" aria-label="Move up">&uarr;</button> <button type="button" class="vbtn" data-act="ve-down" data-id="'+i+'" title="Move down" aria-label="Move down">&darr;</button> <button type="button" class="vbtn" data-act="ve-del" data-id="'+i+'" title="Remove this line" aria-label="Remove line">&times;</button></td></tr>'}).join('');
+  var th='<thead><tr><th>Level</th><th>S. No</th><th>Attribute text</th><th>Marks (empty = heading only)</th><th></th></tr></thead>';
+  var grid='<div class="kscroll"><table class="kgrid vgrid vedit"><colgroup><col style="width:14%"><col style="width:7%"><col style="width:57%"><col style="width:12%"><col style="width:10%"></colgroup>'+th+'<tbody>'+rows+'</tbody></table></div>';
+  var tot=E.rows.reduce(function(a,r){return a+(pnum(r.marks)||0)},0);
+  var foot='<div class="pfoot"><button class="wbtn" type="button" data-act="ve-save">Save list</button><button class="wbtn" type="button" data-act="ve-add">Add line</button><button class="wbtn" type="button" data-act="ve-cancel">Cancel</button>'+
+    '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(E.msg||'Changes apply to appraisals that have no ratings saved yet. Appraisals already started keep their own list.')+'</span>'+
+    '<span class="ptot">Weightage <input class="wf" id="ve-w" value="'+esc(String(E.weight))+'" inputmode="decimal" aria-label="Weightage" style="width:60px"></span><span class="ptot">Total marks <input class="wf" id="ve-t" readonly value="'+tot.toFixed(2)+'"></span></div>';
+  return grid+foot;
 }
 // Stretch the grid so the Save / Add / Total row ends just above the bottom of the screen (the taskbar), whatever the screen size or zoom.
 function pmsFit(){
@@ -748,6 +811,13 @@ function pmsStick(){
   [].forEach.call(b.children,function(x){x.style.top=h1+'px'});[].forEach.call(c.children,function(x){x.style.top=(h1+h2)+'px'});
 }
 function pmsEdit(el){
+  if(el.hasAttribute('data-ef')){var E=UI.pms&&UI.pms.editor;if(!E)return;var ei=Number(el.getAttribute('data-i')),ef=el.getAttribute('data-ef');if(!E.rows[ei])return;E.rows[ei][ef]=ef==='lvl'?Number(el.value):el.value;E.msg='';
+    var et=document.getElementById('ve-t');if(et)et.value=E.rows.reduce(function(a,r){return a+(pnum(r.marks)||0)},0).toFixed(2);return}
+  if(el.hasAttribute('data-vf')){var P0=UI.pms;if(!P0||!P0.vrows)return;var vi=Number(el.getAttribute('data-i')),vf=el.getAttribute('data-vf'),vr=P0.vrows[vi];if(!vr)return;
+    vr[vf]=el.value;P0.dirty=true;
+    if(vf!=='remarks'){var n=pnum(el.value);el.classList.toggle('bad',n!=null&&(n<0||n>Number(vr.marks)))}
+    var vt=pmsValTotals();[['pv-max',vt.max],['pv-self',vt.self],['pv-mgr',vt.mgr],['pv-w',vt.w]].forEach(function(x){var b=document.getElementById(x[0]);if(b)b.value=x[1].toFixed(2)});
+    pmsMsg('');return}
   var P=UI.pms;if(!P||!P.rows)return;
   var i=Number(el.getAttribute('data-i')),f=el.getAttribute('data-kf');if(!P.rows[i])return;
   P.rows[i][f]=el.value;P.dirty=true;
@@ -915,6 +985,19 @@ document.addEventListener('click',function(e){
     if(miss){apStat('Enter remarks to reject '+miss.claim+'.');return}
     return run(api('POST','/api/claims/approvals',{decisions:dec}),function(r){return r.decided+' request'+(r.decided===1?'':'s')+(act==='approve'?' approved':' rejected')},function(){UI.apChk={};UI.apRem={};UI.apStat=''});}
   else if(a==='pms-retry'){UI.pms=null}
+  else if(a==='pms-page'){
+    var P4=UI.pms;if(!P4||!P4.p)return;var pn=Number(b.getAttribute('data-v'))===2?2:1;if(pn===P4.page)return;
+    if(P4.dirty){if(!window.confirm('You have unsaved changes. Leave without saving?'))return;pmsInit(P4.p)}
+    UI.pms.page=pn;UI.pms.editor=null}
+  else if(a==='ve-open'){
+    return run(api('GET','/api/pms/values/master'),null,function(m){UI.pms.editor={weight:m.weight,msg:'',rows:m.rows.map(function(r){return {lvl:r.lvl,code:r.code||'',label:r.label,marks:pnum(r.marks)==null?'':pnum(r.marks)}})}})}
+  else if(a==='ve-cancel'){UI.pms.editor=null}
+  else if(a==='ve-add'){var E1=UI.pms.editor;if(!E1)return;if(E1.rows.length>=200){E1.msg='You can add up to 200 lines.';return}E1.rows.push({lvl:3,code:'',label:'',marks:''})}
+  else if(a==='ve-del'){var E2=UI.pms.editor;if(!E2)return;E2.rows.splice(Number(id),1)}
+  else if(a==='ve-up'||a==='ve-down'){var E3=UI.pms.editor;if(!E3)return;var vi=Number(id),vj=a==='ve-up'?vi-1:vi+1;if(vj<0||vj>=E3.rows.length)return;var tmp=E3.rows[vi];E3.rows[vi]=E3.rows[vj];E3.rows[vj]=tmp}
+  else if(a==='ve-save'){
+    var E4=UI.pms.editor;if(!E4)return;var wv=document.getElementById('ve-w');if(wv)E4.weight=wv.value;
+    return run(api('PUT','/api/pms/values/master',{weight:E4.weight,rows:E4.rows}),'List of attributes saved',function(){var P5=UI.pms;P5.editor=null;P5.p=null;P5.dirty=false;pmsOpen(P5.emp,P5.type,P5.year)})}
   else if(a==='pms-add'){
     var P=UI.pms;if(!P||!P.rows)return;
     if(P.p&&P.p.blocked)return;
@@ -924,6 +1007,10 @@ document.addEventListener('click',function(e){
     var P2=UI.pms;if(!P2||!P2.rows)return;P2.rows.splice(Number(id),1);P2.dirty=true}
   else if(a==='pms-save'){
     var P3=UI.pms;if(!P3||!P3.p||P3.p.blocked)return;
+    if(P3.page===2){
+      var badRow=P3.vrows.filter(function(r){var x=pnum(r.selfAch),y=pnum(r.mgrAch);return r.marks!=null&&((x!=null&&(x<0||x>r.marks))||(y!=null&&(y<0||y>r.marks)))})[0];
+      if(badRow){pmsMsg('Rating cannot be more than the marks ('+Number(badRow.marks).toFixed(2)+') for: '+badRow.label);return}
+      return run(api('POST','/api/pms/values/save',{emp:P3.emp,type:P3.type,year:P3.year,rows:P3.vrows.map(function(r){return {ord:r.ord,selfAch:r.selfAch,mgrAch:r.mgrAch,remarks:r.remarks}})}),'Values assessment saved',function(r){pmsInit(r);UI.pms.msg='Saved.'})}
     var tt=pmsTotals();if(tt.w>100.0001){pmsMsg('The weightage total cannot be more than 100.');return}
     var hadNo=!!P3.p.appraisal.no;
     return run(api('POST','/api/pms/save',{emp:P3.emp,type:P3.type,year:P3.year,kras:P3.rows}),'Appraisal saved',function(r){pmsInit(r);UI.pms.msg=(!hadNo&&r.appraisal.no?'Saved. PMS number '+r.appraisal.no+' generated.':'Saved.')+(Math.abs(pmsTotals().w-100)>0.001?' The weightage total should be 100 before you send it for approval.':'')});}
@@ -942,7 +1029,7 @@ document.addEventListener('click',function(e){
 
 document.addEventListener('input',function(e){
   var t0=e.target;
-  if(t0.hasAttribute&&t0.hasAttribute('data-kf')){pmsEdit(t0);return}
+  if(t0.hasAttribute&&(t0.hasAttribute('data-kf')||t0.hasAttribute('data-vf')||t0.hasAttribute('data-ef'))){pmsEdit(t0);return}
   if(t0.id==='ap-q'){UI.apQ=t0.value;var tb=document.getElementById('ap-tbody');if(tb)tb.innerHTML=apRows();return}
   if(t0.classList&&t0.classList.contains('ap-rem')){UI.apRem=UI.apRem||{};UI.apRem[t0.getAttribute('data-id')]=t0.value;return}
   if(e.target.closest&&e.target.closest('#tripform'))updateEst();
