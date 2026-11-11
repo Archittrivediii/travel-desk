@@ -236,10 +236,14 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .vgrid{min-width:760px}
 .vgrid th{top:0;border-bottom:2px solid var(--wstrong)}
 .vgrid td.vl{padding:4px 6px;line-height:1.3}
-.vgrid tr.v1 td{background:#cfe6a4;color:#1b2a05;font-weight:700}
+.vgrid tr.v1 td{background:#bcd3ee;color:#10253f;font-weight:700}
+.vgrid tr.v1 td.vl{text-align:center;font-size:12px}
+.vgrid .vt{font-weight:700;font-size:12px}.vgrid .vs{font-size:10.5px;font-weight:400;line-height:1.35}
 .vgrid tr.v2 td{background:var(--wlabel)}
 .vgrid tr.v3 td{background:var(--wlabel)}
 .vgrid tr.v3 td.vl{padding-left:14px}
+.vgrid tr.v2 td{background:var(--wfield)}
+.vgrid tr.v2 td.vl{padding:3px 6px}
 .vgrid tr.v1 td.kc,.vgrid tr.v2 td.kc{font-weight:700}
 .vgrid td.kn{text-align:right;padding:2px 8px}
 .vgrid .vin{text-align:right;background:var(--wfield)}
@@ -760,10 +764,15 @@ function pmsValTotals(){
   P.vrows.forEach(function(r){if(r.marks==null)return;max+=Number(r.marks);var a=pnum(r.selfAch),b=pnum(r.mgrAch);s+=a||0;m+=b||0;eff+=(b!=null?b:(a||0))});
   return {max:max,self:s,mgr:m,w:max?eff/max*P.vweight:0};
 }
+function valLabel(r){
+  var ln=String(r.label||'').split('\n'),h='<div class="vt">'+esc(ln[0])+'</div>';
+  for(var k=1;k<ln.length;k++)h+='<div class="vs">'+esc(ln[k])+'</div>';
+  return h;
+}
 function pmsValRow(r,i,can){
   var rate=r.marks!=null,cls=r.lvl===1?'v1':r.lvl===2?'v2':'v3',bad=function(v){var n=pnum(v);return n!=null&&(n<0||n>Number(r.marks))};
   var inp=function(f,v,ed){return rate?'<input class="kin vin'+(bad(v)?' bad':'')+'" data-vf="'+f+'" data-i="'+i+'" value="'+esc(v)+'"'+(ed?'':' readonly tabindex="-1"')+' inputmode="decimal" aria-label="'+(f==='selfAch'?'Self rating':'Manager rating')+' for '+esc(r.label)+'">':''};
-  return '<tr class="'+cls+'"><td class="kc">'+esc(r.code)+'</td><td class="vl">'+esc(r.label)+'</td><td class="kn">'+(rate?Number(r.marks).toFixed(2):'')+'</td>'+
+  return '<tr class="'+cls+'"><td class="kc">'+esc(r.code)+'</td><td class="vl">'+valLabel(r)+'</td><td class="kn">'+(rate?Number(r.marks).toFixed(2):'')+'</td>'+
     '<td>'+inp('selfAch',r.selfAch,can.self&&can.rate)+'</td><td>'+inp('mgrAch',r.mgrAch,can.mgr&&can.rate)+'</td>'+
     '<td>'+(rate?'<textarea class="kin kta" rows="1" data-vf="remarks" data-i="'+i+'"'+(can.mgr&&can.rate?'':' readonly tabindex="-1"')+' aria-label="Remarks for '+esc(r.label)+'">'+esc(r.remarks)+'</textarea>':'')+'</td></tr>';
 }
@@ -786,14 +795,14 @@ function viewPmsEditor(P){
   var E=P.editor,lv=function(v){return [[1,'Main value'],[2,'Sub heading'],[3,'Behaviour line']].map(function(o){return '<option value="'+o[0]+'"'+(o[0]===v?' selected':'')+'>'+o[1]+'</option>'}).join('')};
   var rows=E.rows.map(function(r,i){return '<tr><td><select class="kin" data-ef="lvl" data-i="'+i+'" aria-label="Level">'+lv(r.lvl)+'</select></td>'+
     '<td><input class="kin" data-ef="code" data-i="'+i+'" value="'+esc(r.code)+'" maxlength="10" aria-label="S. No"></td>'+
-    '<td><input class="kin" data-ef="label" data-i="'+i+'" value="'+esc(r.label)+'" maxlength="400" aria-label="Text"></td>'+
+    '<td><textarea class="kin kta" rows="3" data-ef="label" data-i="'+i+'" maxlength="1000" aria-label="Text">'+esc(r.label)+'</textarea></td>'+
     '<td><input class="kin" style="text-align:right" data-ef="marks" data-i="'+i+'" value="'+esc(r.marks==null?'':r.marks)+'" inputmode="decimal" aria-label="Marks"></td>'+
     '<td class="kc" style="white-space:nowrap"><button type="button" class="vbtn" data-act="ve-up" data-id="'+i+'" title="Move up" aria-label="Move up">&uarr;</button> <button type="button" class="vbtn" data-act="ve-down" data-id="'+i+'" title="Move down" aria-label="Move down">&darr;</button> <button type="button" class="vbtn" data-act="ve-del" data-id="'+i+'" title="Remove this line" aria-label="Remove line">&times;</button></td></tr>'}).join('');
-  var th='<thead><tr><th>Level</th><th>S. No</th><th>Attribute text</th><th>Marks (empty = heading only)</th><th></th></tr></thead>';
+  var th='<thead><tr><th>Level</th><th>S. No</th><th>Attribute (title, then lines under it)</th><th>Marks (empty = heading only)</th><th></th></tr></thead>';
   var grid='<div class="kscroll"><table class="kgrid vgrid vedit"><colgroup><col style="width:14%"><col style="width:7%"><col style="width:57%"><col style="width:12%"><col style="width:10%"></colgroup>'+th+'<tbody>'+rows+'</tbody></table></div>';
   var tot=E.rows.reduce(function(a,r){return a+(pnum(r.marks)||0)},0);
   var foot='<div class="pfoot"><button class="wbtn" type="button" data-act="ve-save">Save list</button><button class="wbtn" type="button" data-act="ve-add">Add line</button><button class="wbtn" type="button" data-act="ve-cancel">Cancel</button>'+
-    '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(E.msg||'Changes apply to appraisals that have no ratings saved yet. Appraisals already started keep their own list.')+'</span>'+
+    '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(E.msg||'First line = title (bold); press Enter for the lines under it. Changes apply to appraisals with no ratings saved yet; started ones keep their own list.')+'</span>'+
     '<span class="ptot">Weightage <input class="wf" id="ve-w" value="'+esc(String(E.weight))+'" inputmode="decimal" aria-label="Weightage" style="width:60px"></span><span class="ptot">Total marks <input class="wf" id="ve-t" readonly value="'+tot.toFixed(2)+'"></span></div>';
   return grid+foot;
 }

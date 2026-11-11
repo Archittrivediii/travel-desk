@@ -234,25 +234,20 @@ CREATE INDEX IF NOT EXISTS pms_value_rows_idx ON pms_value_rows (appraisal_id, o
 ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS values_weight numeric;
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pms_settings WHERE key = 'values_seeded') THEN
+  -- One time: the list of attributes as per the appraisal form (version 2). After this the admin edits it on screen.
+  IF NOT EXISTS (SELECT 1 FROM pms_settings WHERE key = 'values_v2') THEN
+    DELETE FROM pms_value_master;
     INSERT INTO pms_value_master (ord, lvl, code, label, marks) VALUES
-      (1, 1, '1', 'Integrity', NULL),
-      (2, 2, 'A', 'Commitment:', NULL),
-      (3, 3, '', '* Keeps and honors work promises and timelines', 2.5),
-      (4, 3, '', '* Proactively communicated revised timelines without being asked.', 2.5),
-      (5, 2, 'B', 'Responsibility:', NULL),
-      (6, 3, '', '* Takes responsibility for actions', 2.5),
-      (7, 3, '', '* Makes right the impact of any adverse result due to actions taken.', 2.5),
-      (8, 1, '2', 'Entrepreneurship', NULL),
-      (9, 2, 'A', 'Initiative:', NULL),
-      (10, 3, '', '* Does things before being asked or being forced by events', 1.5),
-      (11, 3, '', '* Identifies and acts on opportunities for improvement in his area of work', 1.5),
-      (12, 2, 'B', 'Planning: Plans work systematically, anticipates obstacles, evaluates alternatives.', 3),
-      (13, 2, 'C', 'Work:', NULL),
-      (14, 3, '', '* Performs high quality work on a regular basis', 1.5),
-      (15, 3, '', '* Takes repeated / different action to achieve result/overcome obstacle', 1.5),
-      (16, 2, 'D', 'Efficiency:Looks for / finds ways to do things faster at less cost without affecting timelines or quality.', 3),
-      (17, 2, 'E', 'Problem Solving:Generates new solutions, switches to alternative strategy to reach goals.', 3);
-    INSERT INTO pms_settings (key, value) VALUES ('values_weightage', '20'), ('values_seeded', '1');
+      (1, 1, '', 'Entrepreneurship', NULL),
+      (2, 2, '1', E'Initiative :\n- Does things before being asked or being forced by events\n- Identifies and acts on opportunities for improvement in his area of work', 3),
+      (3, 2, '2', E'Planning:\nPlans work systematically, anticipates obstacles, evaluates alternatives.', 3),
+      (4, 2, '3', E'Work:\n- Performs high quality work on a regular basis\n- Takes repeated / different action to achieve result/overcome obstacle', 3),
+      (5, 2, '4', E'Efficiency:\nLooks for / finds ways to do things faster at less cost without affecting timelines or quality.', 3),
+      (6, 2, '5', E'Problem Solving:\nGenerates new solutions, switches to alternative strategy to reach goals.', 3),
+      (7, 1, '', 'Integrity', NULL),
+      (8, 2, '6', E'Commitment:\n- Keeps and honors work promises and timelines\n- Proactively communicated revised timelines without being asked.', 5),
+      (9, 2, '7', E'Responsibility:\n- Takes responsibility for actions\n- Makes right the impact of any adverse result due to actions taken.', 5);
+    INSERT INTO pms_settings (key, value) VALUES ('values_weightage', '20') ON CONFLICT (key) DO UPDATE SET value = '20';
+    INSERT INTO pms_settings (key, value) VALUES ('values_seeded', '1'), ('values_v2', '1') ON CONFLICT (key) DO NOTHING;
   END IF;
 END $$;

@@ -419,7 +419,9 @@ const VAL_COLS = `ord, lvl, code, label, marks, self_ach AS "selfAch", mgr_ach A
 // The list of attributes for one appraisal: its own copy if it was saved, else (Annual) the Mid Year copy, else the master list.
 async function valuesBase(emp, year, type, a) {
   const own = a ? (await q(`SELECT ${VAL_COLS} FROM pms_value_rows WHERE appraisal_id = $1 ORDER BY ord`, [a.id])).rows : [];
-  if (own.length) return { weight: a.values_weight == null ? (await valuesMaster()).weight : Number(a.values_weight), rows: own, stored: true };
+  // A copy with no rating and no remark yet is just a copy of the list: use the current list instead.
+  const used = own.some((r) => r.selfAch != null || r.mgrAch != null || (r.remarks || '').trim());
+  if (own.length && used) return { weight: a.values_weight == null ? (await valuesMaster()).weight : Number(a.values_weight), rows: own, stored: true };
   if (type === 'Annual Appraisal') {
     const m = (await q(`SELECT id, values_weight FROM pms_appraisals WHERE emp = $1 AND year = $2 AND type = 'Mid Year Appraisal'`, [emp, year])).rows[0];
     const rows = m ? (await q(`SELECT ${VAL_COLS} FROM pms_value_rows WHERE appraisal_id = $1 ORDER BY ord`, [m.id])).rows : [];
@@ -564,7 +566,7 @@ route('PUT', '/api/pms/values/master', async ({ actor, body }) => {
   const rows = list.map((r, i) => {
     const lvl = Number(r && r.lvl);
     if (![1, 2, 3].includes(lvl)) throw bad('Row ' + (i + 1) + ': choose the level.');
-    const label = text(r.label, 400);
+    const label = text(r.label, 1000);
     if (!label) throw bad('Row ' + (i + 1) + ': enter the text.');
     let marks = null;
     if (r.marks !== '' && r.marks != null) {
