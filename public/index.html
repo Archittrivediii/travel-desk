@@ -779,7 +779,7 @@ function viewPms(){
 function pmsValTotals(){
   var P=UI.pms,max=0,s=0,m=0,eff=0;
   P.vrows.forEach(function(r){if(r.marks==null)return;max+=Number(r.marks);var a=pnum(r.selfAch),b=pnum(r.mgrAch);s+=a||0;m+=b||0;eff+=(b!=null?b:(a||0))});
-  return {max:max,self:s,mgr:m,eff:eff,pct:max?m/max*100:0};
+  return {max:max,self:s,mgr:m,eff:eff,pct:max?m/max*P.vweight:0};
 }
 function valLabel(r){
   var ln=String(r.label||'').split('\n'),h='<div class="vt">'+esc(ln[0])+'</div>';
@@ -800,7 +800,7 @@ function viewPmsValues(P,p,can){
   var th='<thead><tr><th>S. No</th><th>B - Qualitative Attributes ( Weightage : '+esc(String(P.vweight))+' )</th><th>Marks</th><th>Actual Self Rating</th><th>Actual Manager Rating</th><th>Reporting Manager\'s Remarks wrt to attribute</th></tr></thead>';
   var body=P.vrows.map(function(r,i){return pmsValRow(r,i,can)}).join('')||'<tr><td colspan="6" class="emptyc">No attributes are set up yet.</td></tr>';
   var tfoot='<tfoot><tr class="vtot"><td></td><td class="vtl">Score ( out of max <span id="pv-maxl">'+t.max.toFixed(2).replace(/\.00$/,'')+'</span> )</td><td><input class="wf" id="pv-max" readonly aria-label="Total marks" value="'+t.max.toFixed(2)+'"></td><td><input class="wf" id="pv-self" readonly aria-label="Total self rating" value="'+t.self.toFixed(2)+'"></td><td><input class="wf" id="pv-mgr" readonly aria-label="Total manager rating" value="'+t.mgr.toFixed(2)+'"></td>'+
-    '<td class="vpc"><span>Score in percentage</span><input class="wf" id="pv-pct" readonly title="Score in percentage = total manager rating / total marks x 100" aria-label="Score in percentage" value="'+t.pct.toFixed(2)+'"></td></tr></tfoot>';
+    '<td class="vpc"><span>Score in percentage</span><input class="wf" id="pv-pct" readonly title="Score in percentage = total manager rating / total marks x '+esc(String(P.vweight))+'" aria-label="Score in percentage" value="'+t.pct.toFixed(2)+'"></td></tr></tfoot>';
   var grid='<div class="kscroll"><table class="kgrid vgrid"><colgroup><col style="width:5%"><col style="width:43%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:26%"></colgroup>'+th+'<tbody>'+body+'</tbody>'+tfoot+'</table></div>';
   var role=p.blocked?p.blocked:!can.rate?'Ratings for the values are entered in the Mid Year and Annual appraisals.':can.self&&!can.mgr?'You can enter your self rating (not more than the marks of each line).':(can.mgr?'You are the reporting manager: you can enter the manager rating and your remarks.':'');
   var off=(p.blocked||!can.rate)?' disabled':'';
@@ -814,8 +814,9 @@ function viewPmsValues(P,p,can){
 var PMS_KEY=[['> 40%','1','Poor Performance'],['41% - 60%','2','Below Average'],['61% - 80%','3','Average Performance'],['81% - 94%','4','Good Performance'],['95% - 100%','5','Outstanding']];
 var PMS_CBOX=[['appraiser','Comments - Appraiser (Immediate/Reporting Manager)','mgr',3],['action','Any specific action  (Training/Change in Role/ Specific Project /PIP, etc)','mgr',2],['reviewer','Comments - Reviewer ( Manager\'s Manager + HOD)','rev',2],['appraisee','Comments from the Appraisee (Employee\'s overall appraisal process feedback)','self',2],['hr','Comment from HR','hr',2]];
 function pmsOverall(){
-  var a=pmsTotals().score,v=pmsValTotals(),tot=a+v.eff,den=100+v.max;
-  return {total:tot,pct:den?tot/den*100:0};
+  // A = Page 1 score (final = score / 100 x 80). B = total manager rating / total marks x 20 (the weightage of the values).
+  var a=pmsTotals().score,v=pmsValTotals();
+  return {total:a+v.mgr,pct:a/100*80+v.pct};
 }
 function viewPmsComments(P,p){
   setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsFit()},0);
