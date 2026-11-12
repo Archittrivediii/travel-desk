@@ -258,3 +258,14 @@ ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_action    text NOT NULL DE
 ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_reviewer  text NOT NULL DEFAULT '';
 ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_appraisee text NOT NULL DEFAULT '';
 ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_hr        text NOT NULL DEFAULT '';
+
+-- PMS Page 4: the approval chain of an appraisal (Manager, HOD, Function Head, CHRO). Rows are written when the appraisal is sent for approval (Page 6).
+CREATE TABLE IF NOT EXISTS pms_approvals (
+  appraisal_id text NOT NULL REFERENCES pms_appraisals(id) ON DELETE CASCADE,
+  level        int  NOT NULL CHECK (level BETWEEN 1 AND 4),
+  email        text NOT NULL DEFAULT '',
+  status       text NOT NULL DEFAULT 'Pending',
+  acted_at     timestamptz,
+  remarks      text NOT NULL DEFAULT '',
+  PRIMARY KEY (appraisal_id, level)
+);

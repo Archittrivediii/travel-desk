@@ -418,7 +418,8 @@ async function pmsPayload(actor, empId, type, year) {
     const m = (await q(`SELECT c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND year = $2 AND type = 'Mid Year Appraisal'`, [empId, year])).rows[0];
     if (m) comments = cm(m);
   }
-  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments };
+  const approvals = await pmsApprovals(empId, a);
+  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments, approvals };
 }
 
 
@@ -446,6 +447,24 @@ async function valuesBase(emp, year, type, a) {
 async function pmsValues(emp, type, year, a) {
   const b = await valuesBase(emp, year, type, a);
   return { weight: b.weight, rows: b.rows };
+}
+
+
+// ----- Page 4: submission and approval status -----
+const APPROVAL_LABELS = ['Submitted to Manager', 'Submitted to HOD', 'Submitted to Function Head', 'Submitted to CHRO'];
+async function pmsApprovals(empId, a) {
+  const u = (await q(`SELECT u.dept, COALESCE(m.email, '') AS mgr_email FROM users u LEFT JOIN users m ON m.id = u.reporting_to WHERE u.id = $1`, [empId])).rows[0];
+  const hod = (await q(`SELECT COALESCE(email, '') AS email FROM users WHERE role = 'manager' AND dept = $1 ORDER BY id LIMIT 1`, [u.dept])).rows[0];
+  const st = {};
+  (await q(`SELECT key, value FROM pms_settings WHERE key IN ('fh_email', 'chro_email')`)).rows.forEach((r) => { st[r.key] = r.value; });
+  const stored = a ? (await q(`SELECT level, email, status, to_char(acted_at, 'DD/MM/YYYY') AS "actedAt" FROM pms_approvals WHERE appraisal_id = $1 ORDER BY level`, [a.id])).rows : [];
+  const def = [u.mgr_email, hod ? hod.email : '', st.fh_email || '', st.chro_email || ''];
+  const rows = APPROVAL_LABELS.map((label, i) => {
+    const s = stored.find((x) => x.level === i + 1);
+    return { level: i + 1, label, email: s && s.email ? s.email : def[i], status: s ? s.status : 'Pending', actedAt: s ? s.actedAt || '' : '' };
+  });
+  const final = rows.every((r) => r.status === 'Approved') ? 'Approved' : stored.length ? 'In approval' : 'Not submitted';
+  return { rows, final, fh: st.fh_email || '', chro: st.chro_email || '' };
 }
 
 // Opens a form. Nothing is created and no number is used by just looking.
@@ -589,6 +608,16 @@ route('POST', '/api/pms/comments/save', async ({ actor, body }) => {
   await q(`UPDATE pms_appraisals SET c_appraiser = $2, c_action = $3, c_reviewer = $4, c_appraisee = $5, c_hr = $6, updated_at = now() WHERE id = $1`,
     [a.id, next.appraiser, next.action, next.reviewer, next.appraisee, next.hr]);
   return pmsPayload(actor, k.emp, k.type, k.year);
+});
+
+// The Function Head and CHRO e-mail ids of the approval chain. Only the admin can change them.
+route('PUT', '/api/pms/approvers', async ({ actor, body }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the approvers.');
+  const fh = text(body.fh, 200), chro = text(body.chro, 200), ok = (v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  if (!ok(fh)) throw bad('Enter a valid Function Head e-mail id.');
+  if (!ok(chro)) throw bad('Enter a valid CHRO e-mail id.');
+  await q(`INSERT INTO pms_settings (key, value) VALUES ('fh_email', $1), ('chro_email', $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [fh, chro]);
+  return { fh, chro };
 });
 
 route('GET', '/api/pms/values/master', async ({ actor }) => {

@@ -233,6 +233,17 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .ptabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--wline);margin-top:4px}
 .ptab{font:inherit;font-size:11px;padding:4px 10px;border:1px solid var(--wgrid);border-bottom:0;background:var(--wlabel);color:var(--ink);cursor:pointer}
 .ptab.on{background:var(--wfield);font-weight:700}.ptab:disabled{color:var(--ink-2);cursor:not-allowed}
+.p4box{padding:6px 8px}
+.p4wrap{display:flex;justify-content:center;padding:48px 0 16px}
+.p4{border-collapse:collapse;font-size:12px;width:min(920px,100%)}
+.p4 th,.p4 td{border:1px solid var(--wline);padding:2px;background:var(--wfield);color:var(--ink);text-transform:none;letter-spacing:0;position:static;font-weight:400;text-align:left}
+.p4 th{padding:3px 6px}
+.p4 td.sn{text-align:center;width:70px}
+.p4 td .c{background:var(--wlabel);text-align:center;padding:3px 6px;min-height:22px}
+.p4 td .c.ph{color:var(--ink-2)}
+.p4 th:nth-child(1){width:70px}
+.p4adm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;font-size:12px;padding:6px 0 12px}
+.p4adm label{display:flex;gap:4px;align-items:center}.p4adm .wf{width:220px}
 .p3{padding:6px 8px;background:var(--wbg,#efefef)}
 .p3sum{border-collapse:collapse;font-size:12px;margin-bottom:12px;min-width:420px;width:50%}
 .p3sum th,.p3sum td{border:1px solid var(--wline);padding:2px 6px;text-align:center;font-weight:600;background:var(--wfield);text-transform:none;letter-spacing:0;position:static;color:var(--ink)}
@@ -759,9 +770,10 @@ function viewPms(){
     '<div class="phl">Designation:</div><input class="wf phv" readonly aria-label="Designation" value="'+esc(e.desig)+'">'+
     '<div class="phl">Reporting Manager:</div><input class="wf phv" readonly aria-label="Reporting Manager" value="'+esc(e.manager)+'">'+
     '<div class="phl">Date of Joining</div><input class="wf phv" readonly aria-label="Date of Joining" value="'+esc(fd(e.doj))+'"></div>';
-  var tabs='<div class="ptabs">'+PMS_PAGES.map(function(t,i){var live=i<3;return '<button type="button" class="ptab'+(i+1===P.page?' on':'')+'"'+(live?' data-act="pms-page" data-v="'+(i+1)+'"':' disabled title="Coming soon"')+'>'+esc(t)+'</button>'}).join('')+'</div>';
+  var tabs='<div class="ptabs">'+PMS_PAGES.map(function(t,i){var live=i<4;return '<button type="button" class="ptab'+(i+1===P.page?' on':'')+'"'+(live?' data-act="pms-page" data-v="'+(i+1)+'"':' disabled title="Coming soon"')+'>'+esc(t)+'</button>'}).join('')+'</div>';
   if(P.page===2)return win(tabs+hdr+viewPmsValues(P,p,can),'KRA');
   if(P.page===3)return win(tabs+hdr+viewPmsComments(P,p),'KRA');
+  if(P.page===4)return win(tabs+hdr+viewPmsApprovals(P,p),'KRA');
   var cols=[3,24,8,6,7,6,8,8,8,6,6,10];
   var th='<thead><tr class="kl">'+'ABCDEFGHIJKL'.split('').map(function(l){return '<th>('+l+')</th>'}).join('')+'</tr><tr class="kh"><th></th><th>Key Result Area\'s (Quantitative Goals)</th><th>Source</th><th>Threshold</th><th>Planned Achievement /Target</th><th>Weightage of the KRA</th><th>Timeline/ Periodicity</th><th>Actual Self rating</th><th>Actual Manager rating</th><th>% age</th><th>Score</th><th>Specific Remarks</th></tr>'+
     '<tr class="ks"><th>S. No</th><th></th><th>WFX/Excel Sheet/ E-mails/ Files/ Hardcopy Record etc.</th><th>% achievement below which score will be zero.</th><th>INR/USD/ %age/ Score/ Raw numbers</th><th>Total = 100%</th><th>Monthly/Daily/ H1/H2/ Yearly/ ongoing</th><th>Achievement (As per appraisee)</th><th>Achievement (As per Appraiser)</th><th>Achievement in %age</th><th>Net score</th><th></th></tr></thead>';
@@ -829,6 +841,16 @@ function viewPmsComments(P,p){
   var off=(open&&mine.length)?'':' disabled';
   var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><button class="wbtn" type="button" data-act="pms-save"'+off+'>Save</button><span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||role)+'</span></div>';
   return '<div class="kscroll p3">'+sum+boxes+key+'</div>'+foot;
+}
+function viewPmsApprovals(P,p){
+  setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsFit()},0);
+  var A=p.approvals||{rows:[],final:'Not submitted'},ph=['Manager email ID','HOD email ID','FH email ID','CHRO email ID'];
+  var rows=A.rows.map(function(r,i){return '<tr><td class="sn">'+r.level+'</td><td><div class="c">'+esc(r.label)+'</div></td><td><div class="c'+(r.email?'':' ph')+'">'+esc(r.email||ph[i])+'</div></td><td><div class="c">'+esc(r.status)+(r.actedAt?' ('+esc(r.actedAt)+')':'')+'</div></td></tr>'}).join('');
+  var last='<tr><td class="sn">5</td><td><div class="c">Approved</div></td><td><div class="c">&nbsp;</div></td><td><div class="c">'+esc(A.final)+'</div></td></tr>';
+  var tbl='<table class="p4"><thead><tr><th>Sno</th><th>Assessment Draft</th><th>Self</th><th>Label1</th></tr></thead><tbody>'+rows+last+'</tbody></table>';
+  var adm=me().role==='admin'?'<div class="p4adm"><b>Approvers</b> <label>Function Head e-mail <input class="wf" id="p4-fh" value="'+esc(A.fh||'')+'" aria-label="Function Head e-mail"></label> <label>CHRO e-mail <input class="wf" id="p4-chro" value="'+esc(A.chro||'')+'" aria-label="CHRO e-mail"></label> <button class="wbtn" type="button" data-act="p4-save">Save approvers</button><span class="meta"> Manager and HOD come from the employee master.</span></div>':'';
+  var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||'The status changes when the appraisal is sent for approval and approved at each level.')+'</span></div>';
+  return '<div class="kscroll p4box"><div class="p4wrap">'+tbl+'</div>'+adm+'</div>'+foot;
 }
 function viewPmsEditor(P){
   var E=P.editor,lv=function(v){return [[1,'Main value'],[2,'Sub heading'],[3,'Behaviour line']].map(function(o){return '<option value="'+o[0]+'"'+(o[0]===v?' selected':'')+'>'+o[1]+'</option>'}).join('')};
@@ -1035,9 +1057,12 @@ document.addEventListener('click',function(e){
     return run(api('POST','/api/claims/approvals',{decisions:dec}),function(r){return r.decided+' request'+(r.decided===1?'':'s')+(act==='approve'?' approved':' rejected')},function(){UI.apChk={};UI.apRem={};UI.apStat=''});}
   else if(a==='pms-retry'){UI.pms=null}
   else if(a==='pms-page'){
-    var P4=UI.pms;if(!P4||!P4.p)return;var pn=Number(b.getAttribute('data-v'));pn=pn===3?3:pn===2?2:1;if(pn===P4.page)return;
+    var P4=UI.pms;if(!P4||!P4.p)return;var pn=Math.min(4,Math.max(1,Number(b.getAttribute('data-v'))||1));if(pn===P4.page)return;
     if(P4.dirty){if(!window.confirm('You have unsaved changes. Leave without saving?'))return;pmsInit(P4.p)}
     UI.pms.page=pn;UI.pms.editor=null}
+  else if(a==='p4-save'){
+    var fh=document.getElementById('p4-fh'),ch=document.getElementById('p4-chro');if(!fh||!ch)return;
+    return run(api('PUT','/api/pms/approvers',{fh:fh.value,chro:ch.value}),'Approvers saved',function(){var P6=UI.pms;P6.p=null;pmsOpen(P6.emp,P6.type,P6.year)})}
   else if(a==='ve-open'){
     return run(api('GET','/api/pms/values/master'),null,function(m){UI.pms.editor={weight:m.weight,msg:'',rows:m.rows.map(function(r){return {lvl:r.lvl,code:r.code||'',label:r.label,marks:pnum(r.marks)==null?'':pnum(r.marks)}})}})}
   else if(a==='ve-cancel'){UI.pms.editor=null}
