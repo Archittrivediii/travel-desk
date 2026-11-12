@@ -362,15 +362,11 @@ const PMS_TIMELINES = ['Monthly', 'Daily', 'H1', 'H2', 'Yearly', 'Ongoing'];
 
 // You may open your own appraisal, or one of the people who report to you.
 async function pmsAccess(actor, empId) {
-  const u = (await q(`SELECT id, dept, reporting_to FROM users WHERE id = $1`, [empId])).rows[0];
+  const u = (await q(`SELECT id, reporting_to FROM users WHERE id = $1`, [empId])).rows[0];
   if (!u) throw new HttpError(404, 'Employee not found.');
   const self = u.id === actor.id, mgr = u.reporting_to === actor.id;
-  const up = u.reporting_to ? (await q(`SELECT reporting_to FROM users WHERE id = $1`, [u.reporting_to])).rows[0] : null;
-  // Reviewer = the manager's manager, or the HOD of the department. HR = the admin.
-  const rev = !self && !mgr && ((!!up && up.reporting_to === actor.id) || (actor.role === 'manager' && actor.dept === u.dept));
-  const hr = actor.role === 'admin' && !self;
-  if (!self && !mgr && !rev && !hr) throw new HttpError(403, "You can open only your own appraisal or your team's.");
-  return { self, mgr, rev, hr };
+  if (!self && !mgr) throw new HttpError(403, "You can open only your own appraisal or your team's.");
+  return { self, mgr };
 }
 
 function pmsKey(body, actor) {
@@ -396,11 +392,9 @@ async function pmsPayload(actor, empId, type, year) {
   const emp = (await q(`SELECT u.id, u.name, u.desig, u.dept, COALESCE(u.cur_role, '') AS "curRole", COALESCE(to_char(u.doj, 'YYYY-MM-DD'), '') AS doj,
                                COALESCE(m.name, '') AS manager
                           FROM users u LEFT JOIN users m ON m.id = u.reporting_to WHERE u.id = $1`, [empId])).rows[0];
-  const team = (await q(`SELECT u.id, u.name FROM users u
-                          WHERE u.id <> $1::text AND (u.reporting_to = $1::text OR u.reporting_to IN (SELECT id FROM users WHERE reporting_to = $1::text)
-                                                      OR ($2::text = 'manager' AND u.dept = $3::text) OR $2::text = 'admin') ORDER BY u.name`, [actor.id, actor.role, actor.dept])).rows;
+  const team = (await q(`SELECT id, name FROM users WHERE reporting_to = $1 ORDER BY name`, [actor.id])).rows;
   const no = await pmsNumber(empId, year);
-  const a = (await q(`SELECT id, status, values_weight, c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
+  const a = (await q(`SELECT id, status, values_weight, cmt_appraiser, cmt_action, cmt_reviewer, cmt_appraisee, cmt_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
   let kras = a ? (await q(`SELECT id::text AS id, sno, kra, source, threshold, target, weight, timeline, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks
                              FROM pms_kras WHERE appraisal_id = $1 ORDER BY sno, id`, [a.id])).rows : [];
   // Mid-year and annual forms start from everything already entered (goals, ratings, remarks), the Annual one from the Mid Year form; they are stored when the form is saved.
@@ -411,15 +405,8 @@ async function pmsPayload(actor, empId, type, year) {
   }
   const blocked = type !== 'Setting New KRA' && !no ? 'Set and save the KRAs for this year first (choose Type: Setting New KRA).' : '';
   const values = await pmsValues(empId, type, year, a);
-  const cm = (r) => ({ appraiser: r ? r.c_appraiser : '', action: r ? r.c_action : '', reviewer: r ? r.c_reviewer : '', appraisee: r ? r.c_appraisee : '', hr: r ? r.c_hr : '' });
-  let comments = cm(a);
-  // The Annual form starts with the comments of the Mid Year form.
-  if (type === 'Annual Appraisal' && !Object.values(comments).some((v) => v && v.trim())) {
-    const m = (await q(`SELECT c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND year = $2 AND type = 'Mid Year Appraisal'`, [empId, year])).rows[0];
-    if (m) comments = cm(m);
-  }
-  const approvals = await pmsApprovals(empId, a);
-  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments, approvals };
+  const comments = { appraiser: a ? a.cmt_appraiser : '', action: a ? a.cmt_action : '', reviewer: a ? a.cmt_reviewer : '', appraisee: a ? a.cmt_appraisee : '', hr: a ? a.cmt_hr : '' };
+  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments };
 }
 
 
@@ -449,24 +436,6 @@ async function pmsValues(emp, type, year, a) {
   return { weight: b.weight, rows: b.rows };
 }
 
-
-// ----- Page 4: submission and approval status -----
-const APPROVAL_LABELS = ['Submitted to Manager', 'Submitted to HOD', 'Submitted to Function Head', 'Submitted to CHRO'];
-async function pmsApprovals(empId, a) {
-  const u = (await q(`SELECT u.dept, COALESCE(m.email, '') AS mgr_email FROM users u LEFT JOIN users m ON m.id = u.reporting_to WHERE u.id = $1`, [empId])).rows[0];
-  const hod = (await q(`SELECT COALESCE(email, '') AS email FROM users WHERE role = 'manager' AND dept = $1 ORDER BY id LIMIT 1`, [u.dept])).rows[0];
-  const st = {};
-  (await q(`SELECT key, value FROM pms_settings WHERE key IN ('fh_email', 'chro_email')`)).rows.forEach((r) => { st[r.key] = r.value; });
-  const stored = a ? (await q(`SELECT level, email, status, to_char(acted_at, 'DD/MM/YYYY') AS "actedAt" FROM pms_approvals WHERE appraisal_id = $1 ORDER BY level`, [a.id])).rows : [];
-  const def = [u.mgr_email, hod ? hod.email : '', st.fh_email || '', st.chro_email || ''];
-  const rows = APPROVAL_LABELS.map((label, i) => {
-    const s = stored.find((x) => x.level === i + 1);
-    return { level: i + 1, label, email: s && s.email ? s.email : def[i], status: s ? s.status : 'Pending', actedAt: s ? s.actedAt || '' : '' };
-  });
-  const final = rows.every((r) => r.status === 'Approved') ? 'Approved' : stored.length ? 'In approval' : 'Not submitted';
-  return { rows, final, fh: st.fh_email || '', chro: st.chro_email || '' };
-}
-
 // Opens a form. Nothing is created and no number is used by just looking.
 route('POST', '/api/pms/open', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
@@ -479,8 +448,7 @@ route('POST', '/api/pms/open', async ({ actor, body }) => {
 route('POST', '/api/pms/save', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
   const acc = await pmsAccess(actor, k.emp);
-  const rate = k.type !== 'Setting New KRA';
-  if (!acc.self && !acc.mgr) throw new HttpError(403, 'Only the employee or the reporting manager can change this form.');          // ratings are only entered in the mid-year and annual appraisals
+  const rate = k.type !== 'Setting New KRA';          // ratings are only entered in the mid-year and annual appraisals
   let a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
   if (a && a.status !== 'Draft') throw new HttpError(409, 'This appraisal is locked.');
   const list = Array.isArray(body.kras) ? body.kras.slice(0, 50) : [];
@@ -546,7 +514,6 @@ route('POST', '/api/pms/values/save', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
   if (k.type === 'Setting New KRA') throw bad('Ratings are entered in the Mid Year and Annual appraisals.');
   const acc = await pmsAccess(actor, k.emp);
-  if (!acc.self && !acc.mgr) throw new HttpError(403, 'Only the employee or the reporting manager can change this form.');
   const no = await pmsNumber(k.emp, k.year);
   if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (choose Type: Setting New KRA).');
   let a = (await q(`SELECT id, status, values_weight FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
@@ -585,39 +552,32 @@ route('POST', '/api/pms/values/save', async ({ actor, body }) => {
   return pmsPayload(actor, k.emp, k.type, k.year);
 });
 
-// Saves the comments of Page 3. Each box can be written only by its own person:
-// appraiser + specific action = the reporting manager, reviewer = manager's manager / HOD, appraisee = the employee, HR = the admin.
+// ----- Page 3: comments -----
+// The reporting manager writes the Appraiser comments and the specific action; the employee writes the Appraisee comments.
+// The Reviewer and HR comments are not written here yet: those people cannot open the form until the approval pages exist.
+// Each person's own boxes are saved and the other boxes are kept as they are.
+const PMS_TYPE_CODE = { 'Setting New KRA': 'K', 'Mid Year Appraisal': 'M', 'Annual Appraisal': 'A' };
 route('POST', '/api/pms/comments/save', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
-  if (k.type === 'Setting New KRA') throw bad('Comments are written in the Mid Year and Annual appraisals.');
   const acc = await pmsAccess(actor, k.emp);
   const no = await pmsNumber(k.emp, k.year);
-  if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (choose Type: Setting New KRA).');
-  let a = (await q(`SELECT id, status, c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (this creates the PMS number).');
+  let a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
   if (a && a.status !== 'Draft') throw new HttpError(409, 'This appraisal is locked.');
-  const sent = body.comments && typeof body.comments === 'object' ? body.comments : {};
-  const cur = a ? { appraiser: a.c_appraiser, action: a.c_action, reviewer: a.c_reviewer, appraisee: a.c_appraisee, hr: a.c_hr } : { appraiser: '', action: '', reviewer: '', appraisee: '', hr: '' };
-  const may = { appraiser: acc.mgr, action: acc.mgr, reviewer: acc.rev, appraisee: acc.self, hr: acc.hr };
-  const next = {};
-  for (const f of Object.keys(cur)) next[f] = may[f] && typeof sent[f] === 'string' ? text(sent[f], 4000) : cur[f];
+  const c = body.comments && typeof body.comments === 'object' ? body.comments : {};
+  const sent = (f) => typeof c[f] === 'string';
+  if (sent('appraiser') && c.appraiser.length > 4000 || sent('action') && c.action.length > 4000 || sent('appraisee') && c.appraisee.length > 4000) throw bad('Each comment can have up to 4000 characters.');
   if (!a) {
-    const id = no + '-' + (k.type === 'Mid Year Appraisal' ? 'M' : 'A');
-    await q(`INSERT INTO pms_appraisals (id, emp, type, year, cycle_no) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (emp, type, year) DO NOTHING`, [id, k.emp, k.type, k.year, no]);
+    await q(`INSERT INTO pms_appraisals (id, emp, type, year, cycle_no) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (emp, type, year) DO NOTHING`, [no + '-' + PMS_TYPE_CODE[k.type], k.emp, k.type, k.year, no]);
     a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
   }
-  await q(`UPDATE pms_appraisals SET c_appraiser = $2, c_action = $3, c_reviewer = $4, c_appraisee = $5, c_hr = $6, updated_at = now() WHERE id = $1`,
-    [a.id, next.appraiser, next.action, next.reviewer, next.appraisee, next.hr]);
+  const set = [], vals = [a.id];
+  const put = (col, v) => { vals.push(v.trim()); set.push(col + ' = $' + vals.length); };
+  if (acc.mgr && sent('appraiser')) put('cmt_appraiser', c.appraiser);
+  if (acc.mgr && sent('action')) put('cmt_action', c.action);
+  if (acc.self && sent('appraisee')) put('cmt_appraisee', c.appraisee);
+  if (set.length) await q(`UPDATE pms_appraisals SET ${set.join(', ')}, updated_at = now() WHERE id = $1`, vals);
   return pmsPayload(actor, k.emp, k.type, k.year);
-});
-
-// The Function Head and CHRO e-mail ids of the approval chain. Only the admin can change them.
-route('PUT', '/api/pms/approvers', async ({ actor, body }) => {
-  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the approvers.');
-  const fh = text(body.fh, 200), chro = text(body.chro, 200), ok = (v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-  if (!ok(fh)) throw bad('Enter a valid Function Head e-mail id.');
-  if (!ok(chro)) throw bad('Enter a valid CHRO e-mail id.');
-  await q(`INSERT INTO pms_settings (key, value) VALUES ('fh_email', $1), ('chro_email', $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [fh, chro]);
-  return { fh, chro };
 });
 
 route('GET', '/api/pms/values/master', async ({ actor }) => {
