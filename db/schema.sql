@@ -251,3 +251,10 @@ BEGIN
     INSERT INTO pms_settings (key, value) VALUES ('values_seeded', '1'), ('values_v2', '1') ON CONFLICT (key) DO NOTHING;
   END IF;
 END $$;
+
+-- PMS Page 3: comments of the appraiser, reviewer, appraisee and HR (one set for each appraisal).
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_appraiser text NOT NULL DEFAULT '';
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_action    text NOT NULL DEFAULT '';
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_reviewer  text NOT NULL DEFAULT '';
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_appraisee text NOT NULL DEFAULT '';
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_hr        text NOT NULL DEFAULT '';
