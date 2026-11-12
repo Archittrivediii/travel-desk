@@ -269,3 +269,16 @@ CREATE TABLE IF NOT EXISTS pms_approvals (
   remarks      text NOT NULL DEFAULT '',
   PRIMARY KEY (appraisal_id, level)
 );
+
+-- PMS Page 5: activities and timelines. Common for everybody, set once for each financial year (the "Year of Appraisal") by the admin.
+CREATE TABLE IF NOT EXISTS pms_timeline_rows (
+  id      bigserial PRIMARY KEY,
+  fy      text NOT NULL,                       -- Year of Appraisal, e.g. 2025-26
+  sec     int  NOT NULL CHECK (sec IN (1, 2)), -- 1 = setting the KRAs for the next year, 2 = completing the full year appraisal
+  ord     int  NOT NULL,
+  action  text NOT NULL,
+  by_text text NOT NULL DEFAULT '',
+  to_text text NOT NULL DEFAULT '',
+  target  text NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS pms_timeline_rows_idx ON pms_timeline_rows (fy, sec, ord);

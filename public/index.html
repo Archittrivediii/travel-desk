@@ -233,6 +233,18 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .ptabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--wline);margin-top:4px}
 .ptab{font:inherit;font-size:11px;padding:4px 10px;border:1px solid var(--wgrid);border-bottom:0;background:var(--wlabel);color:var(--ink);cursor:pointer}
 .ptab.on{background:var(--wfield);font-weight:700}.ptab:disabled{color:var(--ink-2);cursor:not-allowed}
+.tlbox{padding:6px 8px}
+.tlwrap{max-width:1100px;margin:0 auto}
+.tlban{font-size:19px;text-align:center;padding:2px 6px;color:#000;font-weight:500}
+.tlban.y{background:#ffff00}.tlban.b{background:#1fa3ff}
+.tltbl{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed}
+.tltbl th,.tltbl td{border:1px solid var(--wline);padding:2px;background:var(--wfield);color:var(--ink);text-transform:none;letter-spacing:0;position:static;font-weight:400;vertical-align:top}
+.tltbl th{background:#cc6600;color:#fff4e6;font-size:14px;font-weight:500;text-align:center;padding:3px 6px}
+.tltbl .sn{width:6%;text-align:center}
+.tltbl th:nth-child(2){width:41%}.tltbl th:nth-child(3){width:22%}.tltbl th:nth-child(4){width:17%}.tltbl th:nth-child(5){width:14%}
+.tltbl td .c{background:var(--wlabel);padding:3px 6px;min-height:36px;text-align:center;line-height:1.35}
+.tltbl td .c.l{text-align:left;white-space:pre-wrap}
+.tledit th:nth-child(6){width:11%}.tledit td .kin{width:100%}
 .p4box{padding:6px 8px}
 .p4wrap{display:flex;justify-content:center;padding:48px 0 16px}
 .p4{border-collapse:collapse;font-size:12px;width:min(920px,100%)}
@@ -729,7 +741,7 @@ function pmsInit(p){
   UI.pms=UI.pms||{};UI.pms.p=p;UI.pms.dirty=false;UI.pms.loading=false;UI.pms.err='';UI.pms.msg='';
   UI.pms.emp=p.employee.id;UI.pms.type=p.appraisal.type;UI.pms.year=p.appraisal.year;
   UI.pms.vrows=((p.values&&p.values.rows)||[]).map(function(r){return {ord:r.ord,lvl:r.lvl,code:r.code||'',label:r.label,marks:pnum(r.marks),selfAch:pnum(r.selfAch)==null?'':pnum(r.selfAch),mgrAch:pnum(r.mgrAch)==null?'':pnum(r.mgrAch),remarks:r.remarks||''}});
-  UI.pms.vweight=p.values&&p.values.weight!=null?Number(p.values.weight):20;UI.pms.cm=Object.assign({appraiser:'',action:'',reviewer:'',appraisee:'',hr:''},p.comments||{});UI.pms.page=UI.pms.page||1;UI.pms.editor=null;
+  UI.pms.vweight=p.values&&p.values.weight!=null?Number(p.values.weight):20;UI.pms.cm=Object.assign({appraiser:'',action:'',reviewer:'',appraisee:'',hr:''},p.comments||{});UI.pms.page=UI.pms.page||1;UI.pms.editor=null;UI.pms.te=null;
   UI.pms.rows=p.kras.map(function(k){return {id:k.id,sno:k.sno,kra:k.kra,source:k.source,threshold:pnum(k.threshold)==null?'':pnum(k.threshold),target:pnum(k.target)==null?'':pnum(k.target),weight:pnum(k.weight)==null?'':pnum(k.weight),timeline:k.timeline,selfAch:pnum(k.selfAch)==null?'':pnum(k.selfAch),mgrAch:pnum(k.mgrAch)==null?'':pnum(k.mgrAch),remarks:k.remarks}});
 }
 function pmsOpen(emp,type,year){
@@ -770,10 +782,11 @@ function viewPms(){
     '<div class="phl">Designation:</div><input class="wf phv" readonly aria-label="Designation" value="'+esc(e.desig)+'">'+
     '<div class="phl">Reporting Manager:</div><input class="wf phv" readonly aria-label="Reporting Manager" value="'+esc(e.manager)+'">'+
     '<div class="phl">Date of Joining</div><input class="wf phv" readonly aria-label="Date of Joining" value="'+esc(fd(e.doj))+'"></div>';
-  var tabs='<div class="ptabs">'+PMS_PAGES.map(function(t,i){var live=i<4;return '<button type="button" class="ptab'+(i+1===P.page?' on':'')+'"'+(live?' data-act="pms-page" data-v="'+(i+1)+'"':' disabled title="Coming soon"')+'>'+esc(t)+'</button>'}).join('')+'</div>';
+  var tabs='<div class="ptabs">'+PMS_PAGES.map(function(t,i){var live=i<5;return '<button type="button" class="ptab'+(i+1===P.page?' on':'')+'"'+(live?' data-act="pms-page" data-v="'+(i+1)+'"':' disabled title="Coming soon"')+'>'+esc(t)+'</button>'}).join('')+'</div>';
   if(P.page===2)return win(tabs+hdr+viewPmsValues(P,p,can),'KRA');
   if(P.page===3)return win(tabs+hdr+viewPmsComments(P,p),'KRA');
   if(P.page===4)return win(tabs+hdr+viewPmsApprovals(P,p),'KRA');
+  if(P.page===5)return win(tabs+hdr+viewPmsTimelines(P,p),'KRA');
   var cols=[3,24,8,6,7,6,8,8,8,6,6,10];
   var th='<thead><tr class="kl">'+'ABCDEFGHIJKL'.split('').map(function(l){return '<th>('+l+')</th>'}).join('')+'</tr><tr class="kh"><th></th><th>Key Result Area\'s (Quantitative Goals)</th><th>Source</th><th>Threshold</th><th>Planned Achievement /Target</th><th>Weightage of the KRA</th><th>Timeline/ Periodicity</th><th>Actual Self rating</th><th>Actual Manager rating</th><th>% age</th><th>Score</th><th>Specific Remarks</th></tr>'+
     '<tr class="ks"><th>S. No</th><th></th><th>WFX/Excel Sheet/ E-mails/ Files/ Hardcopy Record etc.</th><th>% achievement below which score will be zero.</th><th>INR/USD/ %age/ Score/ Raw numbers</th><th>Total = 100%</th><th>Monthly/Daily/ H1/H2/ Yearly/ ongoing</th><th>Achievement (As per appraisee)</th><th>Achievement (As per Appraiser)</th><th>Achievement in %age</th><th>Net score</th><th></th></tr></thead>';
@@ -852,6 +865,38 @@ function viewPmsApprovals(P,p){
   var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||'The status changes when the appraisal is sent for approval and approved at each level.')+'</span></div>';
   return '<div class="kscroll p4box"><div class="p4wrap">'+tbl+'</div>'+adm+'</div>'+foot;
 }
+function fyShort(y){return String(y).slice(2)}
+function tlLines(t){return esc(t).replace(/\n/g,'<br>')}
+function tlSection(sec,title,cls,rows){
+  var body=rows.map(function(r,i){return '<tr><td class="sn">'+(i+1)+'</td><td><div class="c l">'+tlLines(r.action)+'</div></td><td><div class="c">'+tlLines(r.by)+'</div></td><td><div class="c">'+tlLines(r.to)+'</div></td><td><div class="c">'+tlLines(r.target)+'</div></td></tr>'}).join('');
+  return '<div class="tlban '+cls+'">'+esc(title)+'</div><table class="tltbl"><thead><tr><th class="sn">Sno</th><th>ACTION</th><th>By</th><th>To</th><th>Target Date</th></tr></thead><tbody>'+body+'</tbody></table>';
+}
+function tlTitles(year){var y=Number(String(year).slice(0,4));function f(n){return fyShort(n)+'-'+String((n+1)%100).padStart(2,'0')}
+  return ['Activities and Timelines for setting your KRAs for FY '+f(y+1),'Activities and Timelines for completing your Full year Appraisal for FY '+f(y)]}
+function viewPmsTimelines(P,p){
+  setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsFit()},0);
+  var T=p.timelines||{rows:[],set:false},isAdmin=me().role==='admin',tt=tlTitles(P.year);
+  if(P.te)return viewPmsTlEditor(P,tt);
+  var r1=T.rows.filter(function(r){return r.sec===1}),r2=T.rows.filter(function(r){return r.sec===2});
+  var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'">'+(isAdmin?'<button class="wbtn" type="button" data-act="te-open">Edit timelines</button>':'')+
+    '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||(isAdmin?(T.set?'These timelines are common for everybody for '+P.year+'.':'Standard timelines are shown: edit and save them once for '+P.year+'.'):'These timelines are common for everybody.'))+'</span></div>';
+  return '<div class="kscroll tlbox"><div class="tlwrap">'+tlSection(1,tt[0],'y',r1)+'<div style="height:10px"></div>'+tlSection(2,tt[1],'b',r2)+'</div></div>'+foot;
+}
+function viewPmsTlEditor(P,tt){
+  var E=P.te,out='';
+  [1,2].forEach(function(sec){
+    var rows=E.rows.map(function(r,i){return {r:r,i:i}}).filter(function(x){return x.r.sec===sec});
+    var body=rows.map(function(x,n){var i=x.i,r=x.r;return '<tr><td class="sn">'+(n+1)+'</td>'+
+      '<td><textarea class="kin kta" rows="3" data-tf="action" data-i="'+i+'" maxlength="1500" aria-label="Action">'+esc(r.action)+'</textarea></td>'+
+      '<td><textarea class="kin kta" rows="2" data-tf="by" data-i="'+i+'" maxlength="300" aria-label="By">'+esc(r.by)+'</textarea></td>'+
+      '<td><textarea class="kin kta" rows="2" data-tf="to" data-i="'+i+'" maxlength="300" aria-label="To">'+esc(r.to)+'</textarea></td>'+
+      '<td><input class="kin" data-tf="target" data-i="'+i+'" value="'+esc(r.target)+'" maxlength="100" aria-label="Target date"></td>'+
+      '<td class="kc" style="white-space:nowrap"><button type="button" class="vbtn" data-act="te-up" data-id="'+i+'" title="Move up" aria-label="Move up">&uarr;</button> <button type="button" class="vbtn" data-act="te-down" data-id="'+i+'" title="Move down" aria-label="Move down">&darr;</button> <button type="button" class="vbtn" data-act="te-del" data-id="'+i+'" title="Remove this row" aria-label="Remove row">&times;</button></td></tr>'}).join('');
+    out+='<div class="tlban '+(sec===1?'y':'b')+'">'+esc(tt[sec-1])+'</div><table class="tltbl tledit"><thead><tr><th class="sn">Sno</th><th>ACTION</th><th>By</th><th>To</th><th>Target Date</th><th></th></tr></thead><tbody>'+body+'</tbody></table><div style="padding:4px 0 10px"><button class="wbtn" type="button" data-act="te-add" data-id="'+sec+'">Add row</button></div>';
+  });
+  var foot='<div class="pfoot"><button class="wbtn" type="button" data-act="te-save">Save timelines</button><button class="wbtn" type="button" data-act="te-cancel">Cancel</button><span class="pmsg pnote" id="pms-msg" role="status">'+esc(E.msg||'Common for all employees for '+P.year+'. Press Enter in a box for a new line.')+'</span></div>';
+  return '<div class="kscroll tlbox"><div class="tlwrap">'+out+'</div></div>'+foot;
+}
 function viewPmsEditor(P){
   var E=P.editor,lv=function(v){return [[1,'Main value'],[2,'Sub heading'],[3,'Behaviour line']].map(function(o){return '<option value="'+o[0]+'"'+(o[0]===v?' selected':'')+'>'+o[1]+'</option>'}).join('')};
   var rows=E.rows.map(function(r,i){return '<tr><td><select class="kin" data-ef="lvl" data-i="'+i+'" aria-label="Level">'+lv(r.lvl)+'</select></td>'+
@@ -881,6 +926,7 @@ function pmsStick(){
   [].forEach.call(b.children,function(x){x.style.top=h1+'px'});[].forEach.call(c.children,function(x){x.style.top=(h1+h2)+'px'});
 }
 function pmsEdit(el){
+  if(el.hasAttribute('data-tf')){var Pt=UI.pms,Et=Pt&&Pt.te;if(!Et)return;var ti=Number(el.getAttribute('data-i'));if(!Et.rows[ti])return;Et.rows[ti][el.getAttribute('data-tf')]=el.value;Et.msg='';return}
   if(el.hasAttribute('data-cf')){var Pc=UI.pms;if(!Pc||!Pc.cm)return;Pc.cm[el.getAttribute('data-cf')]=el.value;Pc.dirty=true;pmsMsg('');return}
   if(el.hasAttribute('data-ef')){var E=UI.pms&&UI.pms.editor;if(!E)return;var ei=Number(el.getAttribute('data-i')),ef=el.getAttribute('data-ef');if(!E.rows[ei])return;E.rows[ei][ef]=ef==='lvl'?Number(el.value):el.value;E.msg='';
     var et=document.getElementById('ve-t');if(et)et.value=E.rows.reduce(function(a,r){return a+(pnum(r.marks)||0)},0).toFixed(2);return}
@@ -1057,9 +1103,18 @@ document.addEventListener('click',function(e){
     return run(api('POST','/api/claims/approvals',{decisions:dec}),function(r){return r.decided+' request'+(r.decided===1?'':'s')+(act==='approve'?' approved':' rejected')},function(){UI.apChk={};UI.apRem={};UI.apStat=''});}
   else if(a==='pms-retry'){UI.pms=null}
   else if(a==='pms-page'){
-    var P4=UI.pms;if(!P4||!P4.p)return;var pn=Math.min(4,Math.max(1,Number(b.getAttribute('data-v'))||1));if(pn===P4.page)return;
+    var P4=UI.pms;if(!P4||!P4.p)return;var pn=Math.min(5,Math.max(1,Number(b.getAttribute('data-v'))||1));if(pn===P4.page)return;
     if(P4.dirty){if(!window.confirm('You have unsaved changes. Leave without saving?'))return;pmsInit(P4.p)}
     UI.pms.page=pn;UI.pms.editor=null}
+  else if(a==='te-open'){var T0=UI.pms.p.timelines;UI.pms.te={msg:'',rows:T0.rows.map(function(r){return {sec:r.sec,action:r.action,by:r.by||'',to:r.to||'',target:r.target||''}})}}
+  else if(a==='te-cancel'){UI.pms.te=null}
+  else if(a==='te-add'){var E5=UI.pms.te;if(!E5)return;var sc=Number(id)===2?2:1,last=-1;E5.rows.forEach(function(r,k){if(r.sec===sc)last=k});E5.rows.splice(last+1,0,{sec:sc,action:'',by:'',to:'',target:''})}
+  else if(a==='te-del'){var E6=UI.pms.te;if(!E6)return;E6.rows.splice(Number(id),1)}
+  else if(a==='te-up'||a==='te-down'){var E7=UI.pms.te;if(!E7)return;var ti=Number(id),tj=ti,k2;if(a==='te-up'){for(k2=ti-1;k2>=0;k2--)if(E7.rows[k2].sec===E7.rows[ti].sec){tj=k2;break}}else{for(k2=ti+1;k2<E7.rows.length;k2++)if(E7.rows[k2].sec===E7.rows[ti].sec){tj=k2;break}}
+    if(tj!==ti){var tm=E7.rows[ti];E7.rows[ti]=E7.rows[tj];E7.rows[tj]=tm}}
+  else if(a==='te-save'){
+    var E8=UI.pms.te;if(!E8)return;
+    return run(api('PUT','/api/pms/timelines',{year:UI.pms.year,rows:E8.rows}),'Timelines saved',function(){var P7=UI.pms;P7.te=null;P7.p=null;pmsOpen(P7.emp,P7.type,P7.year)})}
   else if(a==='p4-save'){
     var fh=document.getElementById('p4-fh'),ch=document.getElementById('p4-chro');if(!fh||!ch)return;
     return run(api('PUT','/api/pms/approvers',{fh:fh.value,chro:ch.value}),'Approvers saved',function(){var P6=UI.pms;P6.p=null;pmsOpen(P6.emp,P6.type,P6.year)})}
@@ -1105,7 +1160,7 @@ document.addEventListener('click',function(e){
 
 document.addEventListener('input',function(e){
   var t0=e.target;
-  if(t0.hasAttribute&&(t0.hasAttribute('data-kf')||t0.hasAttribute('data-vf')||t0.hasAttribute('data-ef')||t0.hasAttribute('data-cf'))){pmsEdit(t0);return}
+  if(t0.hasAttribute&&(t0.hasAttribute('data-kf')||t0.hasAttribute('data-vf')||t0.hasAttribute('data-ef')||t0.hasAttribute('data-cf')||t0.hasAttribute('data-tf'))){pmsEdit(t0);return}
   if(t0.id==='ap-q'){UI.apQ=t0.value;var tb=document.getElementById('ap-tbody');if(tb)tb.innerHTML=apRows();return}
   if(t0.classList&&t0.classList.contains('ap-rem')){UI.apRem=UI.apRem||{};UI.apRem[t0.getAttribute('data-id')]=t0.value;return}
   if(e.target.closest&&e.target.closest('#tripform'))updateEst();

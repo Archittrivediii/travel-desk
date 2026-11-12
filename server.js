@@ -419,7 +419,8 @@ async function pmsPayload(actor, empId, type, year) {
     if (m) comments = cm(m);
   }
   const approvals = await pmsApprovals(empId, a);
-  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments, approvals };
+  const timelines = await pmsTimelines(year);
+  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments, approvals, timelines };
 }
 
 
@@ -465,6 +466,29 @@ async function pmsApprovals(empId, a) {
   });
   const final = rows.every((r) => r.status === 'Approved') ? 'Approved' : stored.length ? 'In approval' : 'Not submitted';
   return { rows, final, fh: st.fh_email || '', chro: st.chro_email || '' };
+}
+
+
+// ----- Page 5: activities and timelines (common for all, set once for each financial year) -----
+function timelineDefaults(year) {
+  const y = Number(year.slice(0, 4)), short = (n) => String(n).slice(2) + '-' + String((n + 1) % 100).padStart(2, '0');
+  const A = short(y), K = short(y + 1);
+  const row = (sec, action, by, to, target) => ({ sec, action, by, to, target });
+  const HOD = 'HOD / Function head /ED/MD\n(who-ever is applicable)', HEAD = 'HOD / Function Head/ BU Head';
+  return [
+    row(1, `Fill KRA form for next year-FY ${K}( KRA form attached) and submit`, 'Employee', 'Immediate Manager', '8th March(Saturday)'),
+    row(1, 'Review and submit to next level', 'Immediate Manager', HOD, '22nd March( Saturday)'),
+    row(1, 'Finalize KRAs for entire team and submit', HEAD, 'HR', '5th April( Saturday)'),
+    row(1, `Sign off on all FY ${K} KRAs for all SH team members`, HEAD + ' +\nCHRO', '', '19th April( Saturday)'),
+    row(2, 'Complete Self-Assessment and submit:\n      i) Section A  - Fill up Column F (Actual Self)\n      ii) Section B - Fill up Column C (Actual Self)', 'Employee', 'Manager', '25th March'),
+    row(2, `A) Fill in the below sections :\n      i)  Section A  - Fill up Column G - J (Actual)\n      ii) Section B - Fill up Column D & E (Actual)\nB) Schedule Performance review discussion for FY ${A}\nC)  Share performance + development feedback with the Appraisee\nD) Enter Comments as Appraiser / Reviewer and specific actions\nE) Submit Completed Appraisal in SOFT COPY`, 'Immediate Manager / Appraiser', HOD, '10th April'),
+    row(2, 'Submit all Appraisal forms (soft copies) for respective teams', HOD, 'HR', '19th April'),
+    row(2, 'Calibration + normalization exercise to arrive at final performance scores. ( This will happen for departments submitting within timelines)', HEAD + ' +\nCHRO', '', '1st Week May'),
+  ];
+}
+async function pmsTimelines(year) {
+  const rows = (await q(`SELECT sec, action, by_text AS by, to_text AS "to", target FROM pms_timeline_rows WHERE fy = $1 ORDER BY sec, ord, id`, [year])).rows;
+  return rows.length ? { year, set: true, rows } : { year, set: false, rows: timelineDefaults(year) };
 }
 
 // Opens a form. Nothing is created and no number is used by just looking.
@@ -618,6 +642,25 @@ route('PUT', '/api/pms/approvers', async ({ actor, body }) => {
   if (!ok(chro)) throw bad('Enter a valid CHRO e-mail id.');
   await q(`INSERT INTO pms_settings (key, value) VALUES ('fh_email', $1), ('chro_email', $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [fh, chro]);
   return { fh, chro };
+});
+
+// Saves the timelines of one financial year. Only the admin can change them; everybody sees the same list.
+route('PUT', '/api/pms/timelines', async ({ actor, body }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the timelines.');
+  const year = text(body.year, 7), y = Number(year.slice(0, 4));
+  if (!/^\d{4}-\d{2}$/.test(year) || (y + 1) % 100 !== Number(year.slice(5))) throw bad('Choose the year of appraisal from the list.');
+  const list = Array.isArray(body.rows) ? body.rows.slice(0, 100) : [];
+  const rows = list.map((r, i) => {
+    const sec = Number(r && r.sec), action = text(r.action, 1500);
+    if (![1, 2].includes(sec)) throw bad('Row ' + (i + 1) + ': choose the section.');
+    if (!action) throw bad('Row ' + (i + 1) + ': enter the action.');
+    return { sec, ord: i + 1, action, by_text: text(r.by, 300), to_text: text(r.to, 300), target: text(r.target, 100) };
+  });
+  await q(`WITH d AS (DELETE FROM pms_timeline_rows WHERE fy = $1::text)
+          INSERT INTO pms_timeline_rows (fy, sec, ord, action, by_text, to_text, target)
+          SELECT $1::text, x.sec, x.ord, x.action, x.by_text, x.to_text, x.target
+            FROM jsonb_to_recordset($2::jsonb) AS x(sec int, ord int, action text, by_text text, to_text text, target text)`, [year, JSON.stringify(rows)]);
+  return pmsTimelines(year);
 });
 
 route('GET', '/api/pms/values/master', async ({ actor }) => {
