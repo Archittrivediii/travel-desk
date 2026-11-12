@@ -258,6 +258,10 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .vgrid tr.v2 td.vl{padding:3px 6px}
 .vgrid tr.v1 td.kc,.vgrid tr.v2 td.kc{font-weight:700}
 .vgrid td.kn{text-align:right;padding:2px 8px}
+.vgrid tfoot td{position:sticky;bottom:0;background:var(--wfield);border-top:2px solid var(--wstrong);padding:2px 4px;font-weight:700;font-size:11px}
+.vgrid tfoot .vtl{text-align:right}
+.vgrid tfoot .wf{width:100%;text-align:right;font-size:11px;padding:3px 6px;min-height:24px}
+.vgrid tfoot .vpc{display:flex;gap:6px;align-items:center}.vgrid tfoot .vpc .wf{width:90px}
 .vgrid .vin{text-align:right;background:var(--wfield)}
 .vgrid .vin[readonly]{background:var(--wlabel)}
 .vgrid .kin.bad{outline:2px solid var(--bad);outline-offset:-2px}
@@ -775,7 +779,7 @@ function viewPms(){
 function pmsValTotals(){
   var P=UI.pms,max=0,s=0,m=0,eff=0;
   P.vrows.forEach(function(r){if(r.marks==null)return;max+=Number(r.marks);var a=pnum(r.selfAch),b=pnum(r.mgrAch);s+=a||0;m+=b||0;eff+=(b!=null?b:(a||0))});
-  return {max:max,self:s,mgr:m,eff:eff};
+  return {max:max,self:s,mgr:m,eff:eff,pct:max?m/max*100:0};
 }
 function valLabel(r){
   var ln=String(r.label||'').split('\n'),h='<div class="vt">'+esc(ln[0])+'</div>';
@@ -795,13 +799,15 @@ function viewPmsValues(P,p,can){
   var t=pmsValTotals(),isAdmin=me().role==='admin';
   var th='<thead><tr><th>S. No</th><th>B - Qualitative Attributes ( Weightage : '+esc(String(P.vweight))+' )</th><th>Marks</th><th>Actual Self Rating</th><th>Actual Manager Rating</th><th>Reporting Manager\'s Remarks wrt to attribute</th></tr></thead>';
   var body=P.vrows.map(function(r,i){return pmsValRow(r,i,can)}).join('')||'<tr><td colspan="6" class="emptyc">No attributes are set up yet.</td></tr>';
-  var grid='<div class="kscroll"><table class="kgrid vgrid"><colgroup><col style="width:5%"><col style="width:43%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:26%"></colgroup>'+th+'<tbody>'+body+'</tbody></table></div>';
+  var tfoot='<tfoot><tr class="vtot"><td></td><td class="vtl">Score ( out of max <span id="pv-maxl">'+t.max.toFixed(2).replace(/\.00$/,'')+'</span> )</td><td><input class="wf" id="pv-max" readonly aria-label="Total marks" value="'+t.max.toFixed(2)+'"></td><td><input class="wf" id="pv-self" readonly aria-label="Total self rating" value="'+t.self.toFixed(2)+'"></td><td><input class="wf" id="pv-mgr" readonly aria-label="Total manager rating" value="'+t.mgr.toFixed(2)+'"></td>'+
+    '<td class="vpc"><span>Score in percentage</span><input class="wf" id="pv-pct" readonly title="Score in percentage = total manager rating / total marks x 100" aria-label="Score in percentage" value="'+t.pct.toFixed(2)+'"></td></tr></tfoot>';
+  var grid='<div class="kscroll"><table class="kgrid vgrid"><colgroup><col style="width:5%"><col style="width:43%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:26%"></colgroup>'+th+'<tbody>'+body+'</tbody>'+tfoot+'</table></div>';
   var role=p.blocked?p.blocked:!can.rate?'Ratings for the values are entered in the Mid Year and Annual appraisals.':can.self&&!can.mgr?'You can enter your self rating (not more than the marks of each line).':(can.mgr?'You are the reporting manager: you can enter the manager rating and your remarks.':'');
   var off=(p.blocked||!can.rate)?' disabled':'';
   var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><button class="wbtn" type="button" data-act="pms-save"'+off+'>Save</button>'+
     (isAdmin?'<button class="wbtn" type="button" data-act="ve-open">Edit attributes</button>':'')+
     '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||role)+'</span>'+
-    '<span class="ptot">Score ( out of max <span id="pv-maxl">'+t.max.toFixed(2).replace(/\.00$/,'')+'</span> ) <input class="wf" id="pv-max" readonly aria-label="Total marks" value="'+t.max.toFixed(2)+'"><input class="wf" id="pv-self" readonly aria-label="Total self rating" value="'+t.self.toFixed(2)+'"><input class="wf" id="pv-mgr" readonly aria-label="Total manager rating" value="'+t.mgr.toFixed(2)+'"></span></div>';
+    '</div>';
   return grid+foot;
 }
 
@@ -858,7 +864,7 @@ function pmsEdit(el){
   if(el.hasAttribute('data-vf')){var P0=UI.pms;if(!P0||!P0.vrows)return;var vi=Number(el.getAttribute('data-i')),vf=el.getAttribute('data-vf'),vr=P0.vrows[vi];if(!vr)return;
     vr[vf]=el.value;P0.dirty=true;
     if(vf!=='remarks'){var n=pnum(el.value);el.classList.toggle('bad',n!=null&&(n<0||n>Number(vr.marks)))}
-    var vt=pmsValTotals();[['pv-max',vt.max],['pv-self',vt.self],['pv-mgr',vt.mgr]].forEach(function(x){var b=document.getElementById(x[0]);if(b)b.value=x[1].toFixed(2)});
+    var vt=pmsValTotals();[['pv-max',vt.max],['pv-self',vt.self],['pv-mgr',vt.mgr],['pv-pct',vt.pct]].forEach(function(x){var b=document.getElementById(x[0]);if(b)b.value=x[1].toFixed(2)});
     pmsMsg('');return}
   var P=UI.pms;if(!P||!P.rows)return;
   var i=Number(el.getAttribute('data-i')),f=el.getAttribute('data-kf');if(!P.rows[i])return;
