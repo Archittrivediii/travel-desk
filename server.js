@@ -362,15 +362,13 @@ const PMS_TIMELINES = ['Monthly', 'Daily', 'H1', 'H2', 'Yearly', 'Ongoing'];
 
 // You may open your own appraisal, or one of the people who report to you.
 async function pmsAccess(actor, empId) {
-  const u = (await q(`SELECT id, dept, reporting_to FROM users WHERE id = $1`, [empId])).rows[0];
+  const u = (await q(`SELECT id, reporting_to FROM users WHERE id = $1`, [empId])).rows[0];
   if (!u) throw new HttpError(404, 'Employee not found.');
   const self = u.id === actor.id, mgr = u.reporting_to === actor.id;
-  const up = u.reporting_to ? (await q(`SELECT reporting_to FROM users WHERE id = $1`, [u.reporting_to])).rows[0] : null;
-  // Reviewer = the manager's manager, or the HOD of the department. HR = the admin.
-  const rev = !self && !mgr && ((!!up && up.reporting_to === actor.id) || (actor.role === 'manager' && actor.dept === u.dept));
-  const hr = actor.role === 'admin' && !self;
-  if (!self && !mgr && !rev && !hr) throw new HttpError(403, "You can open only your own appraisal or your team's.");
-  return { self, mgr, rev, hr };
+  // Someone the appraisal was sent to (L1 to L4) can open it too.
+  const appr = self || mgr ? false : !!(await q(`SELECT 1 FROM pms_appraisals WHERE emp = $1 AND $2::text IN (l1, l2, l3, l4) LIMIT 1`, [empId, actor.id])).rows[0];
+  if (!self && !mgr && !appr) throw new HttpError(403, "You can open only your own appraisal, your team's, or one that was sent to you.");
+  return { self, mgr, appr };
 }
 
 function pmsKey(body, actor) {
@@ -394,13 +392,17 @@ const KRA_COLS = `k.sno, k.kra, k.source, k.threshold, k.target, k.weight, k.tim
 async function pmsPayload(actor, empId, type, year) {
   const acc = await pmsAccess(actor, empId);
   const emp = (await q(`SELECT u.id, u.name, u.desig, u.dept, COALESCE(u.cur_role, '') AS "curRole", COALESCE(to_char(u.doj, 'YYYY-MM-DD'), '') AS doj,
-                               COALESCE(m.name, '') AS manager
+                               COALESCE(m.name, '') AS manager, u.reporting_to AS "reportingTo"
                           FROM users u LEFT JOIN users m ON m.id = u.reporting_to WHERE u.id = $1`, [empId])).rows[0];
-  const team = (await q(`SELECT u.id, u.name FROM users u
-                          WHERE u.id <> $1::text AND (u.reporting_to = $1::text OR u.reporting_to IN (SELECT id FROM users WHERE reporting_to = $1::text)
-                                                      OR ($2::text = 'manager' AND u.dept = $3::text) OR $2::text = 'admin') ORDER BY u.name`, [actor.id, actor.role, actor.dept])).rows;
+  // The people whose form you can open: your reports, and anyone whose appraisal was sent to you ("waiting" = it is your turn now).
+  const team = (await q(`SELECT u.id, u.name,
+                                (SELECT count(*)::int FROM pms_appraisals p WHERE p.emp = u.id AND p.stage BETWEEN 1 AND 4
+                                    AND (CASE p.stage WHEN 1 THEN p.l1 WHEN 2 THEN p.l2 WHEN 3 THEN p.l3 ELSE p.l4 END) = $1::text) AS waiting
+                           FROM users u
+                          WHERE u.id <> $1::text AND (u.reporting_to = $1::text OR EXISTS (SELECT 1 FROM pms_appraisals p WHERE p.emp = u.id AND $1::text IN (p.l1, p.l2, p.l3, p.l4)))
+                          ORDER BY u.name`, [actor.id])).rows;
   const no = await pmsNumber(empId, year);
-  const a = (await q(`SELECT id, status, values_weight, c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
+  const a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, submitted_at, values_weight, cmt_appraiser, cmt_action, cmt_reviewer, cmt_appraisee, cmt_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
   let kras = a ? (await q(`SELECT id::text AS id, sno, kra, source, threshold, target, weight, timeline, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks
                              FROM pms_kras WHERE appraisal_id = $1 ORDER BY sno, id`, [a.id])).rows : [];
   // Mid-year and annual forms start from everything already entered (goals, ratings, remarks), the Annual one from the Mid Year form; they are stored when the form is saved.
@@ -411,16 +413,11 @@ async function pmsPayload(actor, empId, type, year) {
   }
   const blocked = type !== 'Setting New KRA' && !no ? 'Set and save the KRAs for this year first (choose Type: Setting New KRA).' : '';
   const values = await pmsValues(empId, type, year, a);
-  const cm = (r) => ({ appraiser: r ? r.c_appraiser : '', action: r ? r.c_action : '', reviewer: r ? r.c_reviewer : '', appraisee: r ? r.c_appraisee : '', hr: r ? r.c_hr : '' });
-  let comments = cm(a);
-  // The Annual form starts with the comments of the Mid Year form.
-  if (type === 'Annual Appraisal' && !Object.values(comments).some((v) => v && v.trim())) {
-    const m = (await q(`SELECT c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND year = $2 AND type = 'Mid Year Appraisal'`, [empId, year])).rows[0];
-    if (m) comments = cm(m);
-  }
-  const approvals = await pmsApprovals(empId, a);
-  const timelines = await pmsTimelines(year);
-  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft' }, kras, can: acc, blocked, values, comments, approvals, timelines };
+  const timelines = await pmsTimelines(actor);
+  const comments = { appraiser: a ? a.cmt_appraiser : '', action: a ? a.cmt_action : '', reviewer: a ? a.cmt_reviewer : '', appraisee: a ? a.cmt_appraisee : '', hr: a ? a.cmt_hr : '' };
+  const R = pmsRights(actor, acc, a);
+  const approval = await pmsApprovalInfo(actor, acc, emp, a, no);
+  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft', stage: a ? a.stage : 0 }, kras, can: { self: R.self, mgr: R.mgr, rev: R.rev, hr: R.hr }, blocked, values, comments, timelines, approval };
 }
 
 
@@ -450,47 +447,6 @@ async function pmsValues(emp, type, year, a) {
   return { weight: b.weight, rows: b.rows };
 }
 
-
-// ----- Page 4: submission and approval status -----
-const APPROVAL_LABELS = ['Submitted to Manager', 'Submitted to HOD', 'Submitted to Function Head', 'Submitted to CHRO'];
-async function pmsApprovals(empId, a) {
-  const u = (await q(`SELECT u.dept, COALESCE(m.email, '') AS mgr_email FROM users u LEFT JOIN users m ON m.id = u.reporting_to WHERE u.id = $1`, [empId])).rows[0];
-  const hod = (await q(`SELECT COALESCE(email, '') AS email FROM users WHERE role = 'manager' AND dept = $1 ORDER BY id LIMIT 1`, [u.dept])).rows[0];
-  const st = {};
-  (await q(`SELECT key, value FROM pms_settings WHERE key IN ('fh_email', 'chro_email')`)).rows.forEach((r) => { st[r.key] = r.value; });
-  const stored = a ? (await q(`SELECT level, email, status, to_char(acted_at, 'DD/MM/YYYY') AS "actedAt" FROM pms_approvals WHERE appraisal_id = $1 ORDER BY level`, [a.id])).rows : [];
-  const def = [u.mgr_email, hod ? hod.email : '', st.fh_email || '', st.chro_email || ''];
-  const rows = APPROVAL_LABELS.map((label, i) => {
-    const s = stored.find((x) => x.level === i + 1);
-    return { level: i + 1, label, email: s && s.email ? s.email : def[i], status: s ? s.status : 'Pending', actedAt: s ? s.actedAt || '' : '' };
-  });
-  const final = rows.every((r) => r.status === 'Approved') ? 'Approved' : stored.length ? 'In approval' : 'Not submitted';
-  return { rows, final, fh: st.fh_email || '', chro: st.chro_email || '' };
-}
-
-
-// ----- Page 5: activities and timelines (common for all, set once for each financial year) -----
-function timelineDefaults(year) {
-  const y = Number(year.slice(0, 4)), short = (n) => String(n).slice(2) + '-' + String((n + 1) % 100).padStart(2, '0');
-  const A = short(y), K = short(y + 1);
-  const row = (sec, action, by, to, target) => ({ sec, action, by, to, target });
-  const HOD = 'HOD / Function head /ED/MD\n(who-ever is applicable)', HEAD = 'HOD / Function Head/ BU Head';
-  return [
-    row(1, `Fill KRA form for next year-FY ${K}( KRA form attached) and submit`, 'Employee', 'Immediate Manager', '8th March(Saturday)'),
-    row(1, 'Review and submit to next level', 'Immediate Manager', HOD, '22nd March( Saturday)'),
-    row(1, 'Finalize KRAs for entire team and submit', HEAD, 'HR', '5th April( Saturday)'),
-    row(1, `Sign off on all FY ${K} KRAs for all SH team members`, HEAD + ' +\nCHRO', '', '19th April( Saturday)'),
-    row(2, 'Complete Self-Assessment and submit:\n      i) Section A  - Fill up Column F (Actual Self)\n      ii) Section B - Fill up Column C (Actual Self)', 'Employee', 'Manager', '25th March'),
-    row(2, `A) Fill in the below sections :\n      i)  Section A  - Fill up Column G - J (Actual)\n      ii) Section B - Fill up Column D & E (Actual)\nB) Schedule Performance review discussion for FY ${A}\nC)  Share performance + development feedback with the Appraisee\nD) Enter Comments as Appraiser / Reviewer and specific actions\nE) Submit Completed Appraisal in SOFT COPY`, 'Immediate Manager / Appraiser', HOD, '10th April'),
-    row(2, 'Submit all Appraisal forms (soft copies) for respective teams', HOD, 'HR', '19th April'),
-    row(2, 'Calibration + normalization exercise to arrive at final performance scores. ( This will happen for departments submitting within timelines)', HEAD + ' +\nCHRO', '', '1st Week May'),
-  ];
-}
-async function pmsTimelines(year) {
-  const rows = (await q(`SELECT sec, action, by_text AS by, to_text AS "to", target FROM pms_timeline_rows WHERE fy = $1 ORDER BY sec, ord, id`, [year])).rows;
-  return rows.length ? { year, set: true, rows } : { year, set: false, rows: timelineDefaults(year) };
-}
-
 // Opens a form. Nothing is created and no number is used by just looking.
 route('POST', '/api/pms/open', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
@@ -503,10 +459,10 @@ route('POST', '/api/pms/open', async ({ actor, body }) => {
 route('POST', '/api/pms/save', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
   const acc = await pmsAccess(actor, k.emp);
-  const rate = k.type !== 'Setting New KRA';
-  if (!acc.self && !acc.mgr) throw new HttpError(403, 'Only the employee or the reporting manager can change this form.');          // ratings are only entered in the mid-year and annual appraisals
-  let a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
-  if (a && a.status !== 'Draft') throw new HttpError(409, 'This appraisal is locked.');
+  const rate = k.type !== 'Setting New KRA';          // ratings are only entered in the mid-year and annual appraisals
+  let a = (await q(`SELECT id, status, stage, l1, l2, l3, l4 FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  const R = pmsRights(actor, acc, a);
+  if (!R.self && !R.mgr) throw pmsNoEdit(a);
   const list = Array.isArray(body.kras) ? body.kras.slice(0, 50) : [];
   const old = {};
   if (a) (await q(`SELECT id::text AS id, self_ach, mgr_ach FROM pms_kras WHERE appraisal_id = $1`, [a.id])).rows.forEach((r) => { old[r.id] = r; });
@@ -534,8 +490,8 @@ route('POST', '/api/pms/save', async ({ actor, body }) => {
       sno: i + 1, kra: text(r.kra, 2000), source: text(r.source, 200),
       threshold: threshold == null ? 80 : threshold, target: num(r.target, 'Target'), weight,
       timeline: PMS_TIMELINES.includes(r.timeline) ? r.timeline : 'Ongoing',
-      self_ach: acc.self && rate ? num(r.selfAch, 'Self rating') : (o.self_ach == null ? null : Number(o.self_ach)),
-      mgr_ach: acc.mgr && rate ? num(r.mgrAch, 'Manager rating') : (o.mgr_ach == null ? null : Number(o.mgr_ach)),
+      self_ach: R.self && rate ? num(r.selfAch, 'Self rating') : (o.self_ach == null ? null : Number(o.self_ach)),
+      mgr_ach: R.mgr && rate ? num(r.mgrAch, 'Manager rating') : (o.mgr_ach == null ? null : Number(o.mgr_ach)),
       remarks: text(r.remarks, 1000),
     };
   });
@@ -570,11 +526,11 @@ route('POST', '/api/pms/values/save', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
   if (k.type === 'Setting New KRA') throw bad('Ratings are entered in the Mid Year and Annual appraisals.');
   const acc = await pmsAccess(actor, k.emp);
-  if (!acc.self && !acc.mgr) throw new HttpError(403, 'Only the employee or the reporting manager can change this form.');
   const no = await pmsNumber(k.emp, k.year);
   if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (choose Type: Setting New KRA).');
-  let a = (await q(`SELECT id, status, values_weight FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
-  if (a && a.status !== 'Draft') throw new HttpError(409, 'This appraisal is locked.');
+  let a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, values_weight FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  const R = pmsRights(actor, acc, a);
+  if (!R.self && !R.mgr) throw pmsNoEdit(a);
   const base = await valuesBase(k.emp, k.year, k.type, a);
   const sent = {};
   (Array.isArray(body.rows) ? body.rows : []).forEach((r) => { if (r) sent[Number(r.ord)] = r; });
@@ -590,9 +546,9 @@ route('POST', '/api/pms/values/save', async ({ actor, body }) => {
     const r = sent[b.ord] || {}, rateable = b.marks != null, max = rateable ? Number(b.marks) : 0;
     return {
       ord: b.ord, lvl: b.lvl, code: b.code, label: b.label, marks: rateable ? max : null,
-      self_ach: acc.self && rateable && 'selfAch' in r ? num(r.selfAch, max, 'Self rating') : keep(b.selfAch),
-      mgr_ach: acc.mgr && rateable && 'mgrAch' in r ? num(r.mgrAch, max, 'Manager rating') : keep(b.mgrAch),
-      remarks: acc.mgr && 'remarks' in r ? text(r.remarks, 1000) : (b.remarks || ''),
+      self_ach: R.self && rateable && 'selfAch' in r ? num(r.selfAch, max, 'Self rating') : keep(b.selfAch),
+      mgr_ach: R.mgr && rateable && 'mgrAch' in r ? num(r.mgrAch, max, 'Manager rating') : keep(b.mgrAch),
+      remarks: R.mgr && 'remarks' in r ? text(r.remarks, 1000) : (b.remarks || ''),
     };
   });
   if (!a) {
@@ -609,58 +565,279 @@ route('POST', '/api/pms/values/save', async ({ actor, body }) => {
   return pmsPayload(actor, k.emp, k.type, k.year);
 });
 
-// Saves the comments of Page 3. Each box can be written only by its own person:
-// appraiser + specific action = the reporting manager, reviewer = manager's manager / HOD, appraisee = the employee, HR = the admin.
+// ----- Page 3: comments -----
+// The manager (L1) writes the Appraiser comments and the specific action; the employee writes the Appraisee comments;
+// the HOD (L2) or the Function Head (L3) writes the Reviewer comment on their turn; the CHRO (L4) writes the HR comment on their turn.
+// Each person's own boxes are saved and the other boxes are kept as they are.
+const PMS_TYPE_CODE = { 'Setting New KRA': 'K', 'Mid Year Appraisal': 'M', 'Annual Appraisal': 'A' };
 route('POST', '/api/pms/comments/save', async ({ actor, body }) => {
   const k = pmsKey(body, actor);
-  if (k.type === 'Setting New KRA') throw bad('Comments are written in the Mid Year and Annual appraisals.');
   const acc = await pmsAccess(actor, k.emp);
   const no = await pmsNumber(k.emp, k.year);
-  if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (choose Type: Setting New KRA).');
-  let a = (await q(`SELECT id, status, c_appraiser, c_action, c_reviewer, c_appraisee, c_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
-  if (a && a.status !== 'Draft') throw new HttpError(409, 'This appraisal is locked.');
-  const sent = body.comments && typeof body.comments === 'object' ? body.comments : {};
-  const cur = a ? { appraiser: a.c_appraiser, action: a.c_action, reviewer: a.c_reviewer, appraisee: a.c_appraisee, hr: a.c_hr } : { appraiser: '', action: '', reviewer: '', appraisee: '', hr: '' };
-  const may = { appraiser: acc.mgr, action: acc.mgr, reviewer: acc.rev, appraisee: acc.self, hr: acc.hr };
-  const next = {};
-  for (const f of Object.keys(cur)) next[f] = may[f] && typeof sent[f] === 'string' ? text(sent[f], 4000) : cur[f];
+  if (!no) throw new HttpError(409, 'Set and save the KRAs for this year first (this creates the PMS number).');
+  let a = (await q(`SELECT id, status, stage, l1, l2, l3, l4 FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  const R = pmsRights(actor, acc, a);
+  if (!R.self && !R.mgr && !R.rev && !R.hr) throw pmsNoEdit(a);
+  const c = body.comments && typeof body.comments === 'object' ? body.comments : {};
+  const sent = (f) => typeof c[f] === 'string';
+  if (['appraiser', 'action', 'appraisee', 'reviewer', 'hr'].some((f) => sent(f) && c[f].length > 4000)) throw bad('Each comment can have up to 4000 characters.');
   if (!a) {
-    const id = no + '-' + (k.type === 'Mid Year Appraisal' ? 'M' : 'A');
-    await q(`INSERT INTO pms_appraisals (id, emp, type, year, cycle_no) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (emp, type, year) DO NOTHING`, [id, k.emp, k.type, k.year, no]);
+    await q(`INSERT INTO pms_appraisals (id, emp, type, year, cycle_no) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (emp, type, year) DO NOTHING`, [no + '-' + PMS_TYPE_CODE[k.type], k.emp, k.type, k.year, no]);
     a = (await q(`SELECT id, status FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
   }
-  await q(`UPDATE pms_appraisals SET c_appraiser = $2, c_action = $3, c_reviewer = $4, c_appraisee = $5, c_hr = $6, updated_at = now() WHERE id = $1`,
-    [a.id, next.appraiser, next.action, next.reviewer, next.appraisee, next.hr]);
+  const set = [], vals = [a.id];
+  const put = (col, v) => { vals.push(v.trim()); set.push(col + ' = $' + vals.length); };
+  if (R.mgr && sent('appraiser')) put('cmt_appraiser', c.appraiser);
+  if (R.mgr && sent('action')) put('cmt_action', c.action);
+  if (R.self && sent('appraisee')) put('cmt_appraisee', c.appraisee);
+  if (R.rev && sent('reviewer')) put('cmt_reviewer', c.reviewer);
+  if (R.hr && sent('hr')) put('cmt_hr', c.hr);
+  if (set.length) await q(`UPDATE pms_appraisals SET ${set.join(', ')}, updated_at = now() WHERE id = $1`, vals);
   return pmsPayload(actor, k.emp, k.type, k.year);
 });
 
-// The Function Head and CHRO e-mail ids of the approval chain. Only the admin can change them.
-route('PUT', '/api/pms/approvers', async ({ actor, body }) => {
-  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the approvers.');
-  const fh = text(body.fh, 200), chro = text(body.chro, 200), ok = (v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-  if (!ok(fh)) throw bad('Enter a valid Function Head e-mail id.');
-  if (!ok(chro)) throw bad('Enter a valid CHRO e-mail id.');
-  await q(`INSERT INTO pms_settings (key, value) VALUES ('fh_email', $1), ('chro_email', $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [fh, chro]);
-  return { fh, chro };
+// ----- Page 6: sending for approval -----
+// The chain is L1 Manager, L2 HOD, L3 Function Head (chosen by the employee when submitting) and L4 CHRO (one person for everyone,
+// set by finance). A level that is left empty is skipped. L5 and L6 are not used.
+// stage: 0 = with the employee, 1-4 = waiting for that level, 5 = approved.
+const PMS_LEVEL_NAMES = ['Manager', 'HOD', 'Function Head', 'CHRO'];
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+
+// What the person may change on this appraisal right now.
+//   draft: the employee (own ratings, appraisee comment) and the manager (manager ratings, appraiser comment, action), as always
+//   with L1: only L1; with L2 or L3: only the Reviewer comment; with L4: only the HR comment; approved: nobody.
+function pmsRights(actor, acc, a) {
+  const stage = a ? a.stage : 0;
+  const at = (n) => !!a && a['l' + n] === actor.id;
+  if (stage === 0) return { self: acc.self, mgr: acc.mgr || at(1), rev: false, hr: false };
+  if (stage === 1) return { self: false, mgr: at(1), rev: false, hr: false };
+  return { self: false, mgr: false, rev: (stage === 2 && at(2)) || (stage === 3 && at(3)), hr: stage === 4 && at(4) };
+}
+function pmsNoEdit(a) {
+  if (a && a.stage === 5) return new HttpError(409, 'This appraisal is approved, so it cannot be changed.');
+  if (a && a.stage > 0) return new HttpError(409, 'This appraisal has been sent for approval and is with someone else now, so you cannot change it.');
+  return new HttpError(403, 'You cannot change this appraisal.');
+}
+
+// The CHRO (one for everyone) and the Function Head of each department, set by the finance admin.
+async function pmsApprovers() {
+  const rows = (await q(`SELECT key, value FROM pms_settings WHERE key IN ('chro', 'fh')`)).rows;
+  let chro = '', fh = {};
+  rows.forEach((r) => { if (r.key === 'chro') chro = r.value; if (r.key === 'fh') { try { fh = JSON.parse(r.value) || {}; } catch (e) { fh = {}; } } });
+  return { chro, fh };
+}
+// The usual people for an employee: the reporting manager, that person's manager, the Function Head of the department, the CHRO.
+// Nobody is listed twice, and the employee is never their own approver.
+async function pmsDefaultChain(emp, st) {
+  const seen = new Set([emp.id]);
+  const pick = (id) => { if (!id || seen.has(id)) return null; seen.add(id); return id; };
+  const up = emp.reportingTo ? ((await q(`SELECT reporting_to FROM users WHERE id = $1`, [emp.reportingTo])).rows[0] || {}).reporting_to : null;
+  const l1 = pick(emp.reportingTo), l2 = pick(up), l3 = pick(st.fh[emp.dept]);
+  const l4 = st.chro && !seen.has(st.chro) ? st.chro : null;
+  return [l1, l2, l3, l4];
+}
+
+// Everything Page 4 and Page 6 need to know about the approval of one appraisal.
+async function pmsApprovalInfo(actor, acc, emp, a, no) {
+  const stage = a ? a.stage : 0;
+  const st = await pmsApprovers();
+  let ids = a ? [a.l1, a.l2, a.l3, a.l4] : [null, null, null, null];
+  if (stage === 0 && !ids[0]) ids = await pmsDefaultChain(emp, st);
+  const known = ids.filter(Boolean);
+  const people = {};
+  if (known.length) (await q(`SELECT id, name, COALESCE(email, '') AS email FROM users WHERE id = ANY($1::text[])`, [known])).rows.forEach((u) => { people[u.id] = u; });
+  const chain = ids.map((id, i) => ({ level: i + 1, role: PMS_LEVEL_NAMES[i], id: id || '', name: id && people[id] ? people[id].name : '', email: id && people[id] ? people[id].email : '' }));
+  const hist = a ? (await q(`SELECT h.level, h.action, h.note, h.at, u.name AS by FROM pms_approvals h JOIN users u ON u.id = h.actor WHERE h.appraisal_id = $1 ORDER BY h.id`, [a.id])).rows : [];
+  const lastSub = hist.map((h) => h.action).lastIndexOf('submitted');
+  const since = lastSub < 0 ? hist : hist.slice(lastSub);
+  const lastAct = since[since.length - 1];
+  const wasReturned = !!lastAct && lastAct.action === 'returned';
+  const steps = chain.map((c) => {
+    if (!c.id) return { level: c.level, email: '', status: '', title: '' };
+    const h = since.filter((x) => x.level === c.level).pop();
+    let status = '';
+    if (wasReturned) status = lastAct.level === c.level ? 'Returned' : '';
+    else if (h) status = h.action === 'approved' ? 'Approved' : 'Returned';
+    else if (stage === c.level) status = 'Submitted';
+    return { level: c.level, email: c.email || c.name, status, title: h ? h.by + ' on ' + fmtDate(h.at) + (h.note ? ': ' + h.note : '') : '' };
+  });
+  const holderId = stage >= 1 && stage <= 4 ? ids[stage - 1] : null;
+  const mine = !!holderId && holderId === actor.id;
+  const next = stage >= 1 && stage <= 4 ? [1, 2, 3, 4].find((n) => n > stage && ids[n - 1]) : null;
+  const canPick = stage === 0 && acc.self && !!a;
+  const last = hist[hist.length - 1];
+  let text;
+  if (!no) text = 'Save the goals on Page 1 first. That creates the PMS number.';
+  else if (!a) text = 'Save this form first, then send it for approval.';
+  else if (stage === 5) text = 'Approved on ' + fmtDate(last && last.at) + '.';
+  else if (stage === 0 && wasReturned) text = 'Sent back by ' + lastAct.by + ' on ' + fmtDate(lastAct.at) + ': ' + lastAct.note + (acc.self ? ' Make your changes and submit it again.' : '');
+  else if (stage === 0) text = acc.self ? 'Choose the approvers and press Submit. The appraisal goes to L1 first.' : 'Not submitted yet. The employee has not sent it for approval.';
+  else if (mine) text = next ? 'This appraisal is with you. Add your part, then press Submit to send it to L' + next + ' (' + chain[next - 1].name + ').' : 'This appraisal is with you. Press Approve to approve it. This is the last step.';
+  else text = 'With L' + stage + ' ' + PMS_LEVEL_NAMES[stage - 1] + ' (' + (chain[stage - 1].name || 'nobody') + ') since ' + fmtDate(last && last.at) + '.';
+  let options = null, settings = null;
+  if (canPick) options = (await q(`SELECT id, name, COALESCE(email, '') AS email FROM users WHERE id <> $1 ORDER BY name`, [emp.id])).rows;
+  if (actor.role === 'admin') {
+    const us = (await q(`SELECT id, name, COALESCE(email, '') AS email, dept FROM users ORDER BY name`)).rows;
+    settings = { chro: st.chro, fh: st.fh, depts: [...new Set(us.map((u) => u.dept))].sort(), users: us };
+  }
+  return { stage, chain, steps, finalStatus: stage === 5 ? 'Approved' : '', canPick, canSubmit: (stage === 0 && acc.self && !!a) || mine, canReturn: mine, final: mine && !next, text, options, settings };
+}
+
+// ----- e-mails for the approval flow -----
+async function notifyPms(a, event, toId, by, note) {
+  try {
+    const emp = (await q(`SELECT name FROM users WHERE id = $1`, [a.emp])).rows[0] || { name: '' };
+    const to = (await q(`SELECT name, COALESCE(email, '') AS email FROM users WHERE id = $1`, [toId])).rows[0];
+    if (!to || !to.email) return;
+    const what = a.type + ' ' + a.year + ' (' + (a.cycle_no || a.id) + ')';
+    const link = '\n\nOpen Travel Desk: ' + appUrl() + '\n';
+    let subject, body;
+    if (event === 'waiting') {
+      subject = (a.cycle_no || a.id) + ': ' + emp.name + ' - waiting for you';
+      body = 'Hello ' + to.name + ',\n\n' + emp.name + "'s " + what + ' has been sent to you by ' + by + '.' +
+        '\n\nTo review it: open Performance, choose ' + emp.name + ' in "Name of Employee" (marked "waiting for you"), add your part and press Submit on Page 6.' + link;
+    } else if (event === 'approved') {
+      subject = (a.cycle_no || a.id) + ': approved';
+      body = 'Hello ' + to.name + ',\n\nYour ' + what + ' has been approved. The last approval was given by ' + by + '.' + link;
+    } else {
+      subject = (a.cycle_no || a.id) + ': sent back to you';
+      body = 'Hello ' + to.name + ',\n\n' + by + ' has sent your ' + what + ' back to you.\n\nReason: ' + note + '\n\nPlease make the changes and submit it again.' + link;
+    }
+    await queueMail(a.id, to.email, subject, body);
+  } catch (e) { console.error('PMS notification failed: ' + e.message); }
+}
+
+route('POST', '/api/pms/approval/submit', async ({ actor, body }) => {
+  const k = pmsKey(body, actor);
+  const acc = await pmsAccess(actor, k.emp);
+  const a = (await q(`SELECT * FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  if (!a) throw new HttpError(409, 'Save this form first. Nothing has been saved for it yet.');
+  if (a.stage === 5) throw new HttpError(409, 'This appraisal is already approved.');
+  const changed = () => new HttpError(409, 'Someone else just changed this appraisal. Reopen it and try again.');
+  if (a.stage === 0) {
+    // The employee sends it for the first time (or again after it was sent back).
+    if (!acc.self) throw new HttpError(403, 'Only the employee can send the appraisal for approval.');
+    const g = (await q(`SELECT count(*)::int AS n, COALESCE(sum(weight), 0) AS w FROM pms_kras WHERE appraisal_id = $1`, [a.id])).rows[0];
+    if (!g.n) throw new HttpError(409, 'Save the KRA table on Page 1 before you submit.');
+    if (Math.abs(Number(g.w) - 100) > 0.0001) throw new HttpError(409, 'The weightage total on Page 1 must be 100 before you submit (it is ' + Number(g.w) + ').');
+    const st = await pmsApprovers();
+    if (!st.chro) throw new HttpError(409, 'The CHRO has not been set yet. Ask the finance admin to set it at the bottom of Page 6.');
+    const [l1, l2, l3] = [body.l1, body.l2, body.l3].map((v) => text(v, 20) || null);
+    if (!l1) throw bad('Choose the L1 Manager.');
+    const chosen = [l1, l2, l3].filter(Boolean);
+    if (new Set(chosen).size !== chosen.length) throw bad('Each level needs a different person.');
+    if (chosen.includes(k.emp)) throw bad('You cannot be your own approver.');
+    if ((await q(`SELECT id FROM users WHERE id = ANY($1::text[])`, [chosen])).rows.length !== chosen.length) throw bad('Choose the approvers from the list.');
+    const l4 = st.chro !== k.emp && !chosen.includes(st.chro) ? st.chro : null;
+    const r = await q(`UPDATE pms_appraisals SET stage = 1, status = 'Submitted', l1 = $2, l2 = $3, l3 = $4, l4 = $5, submitted_at = now(), updated_at = now() WHERE id = $1 AND stage = 0`, [a.id, l1, l2, l3, l4]);
+    if (!r.rowCount) throw changed();
+    await q(`INSERT INTO pms_approvals (appraisal_id, level, actor, action) VALUES ($1, 0, $2, 'submitted')`, [a.id, actor.id]);
+    notifyPms(a, 'waiting', l1, actor.name);
+  } else {
+    // An approver sends it on, or gives the final approval.
+    const n = a.stage;
+    if (a['l' + n] !== actor.id) throw new HttpError(403, 'This appraisal is not waiting for you.');
+    const next = [1, 2, 3, 4].find((m) => m > n && a['l' + m]);
+    const r = await q(`UPDATE pms_appraisals SET stage = $2, status = $3, updated_at = now() WHERE id = $1 AND stage = $4`, [a.id, next || 5, next ? 'Submitted' : 'Approved', n]);
+    if (!r.rowCount) throw changed();
+    await q(`INSERT INTO pms_approvals (appraisal_id, level, actor, action, note) VALUES ($1, $2, $3, 'approved', $4)`, [a.id, n, actor.id, text(body.note, 1000)]);
+    if (next) notifyPms(a, 'waiting', a['l' + next], actor.name);
+    else notifyPms(a, 'approved', a.emp, actor.name);
+  }
+  return pmsPayload(actor, k.emp, k.type, k.year);
 });
 
-// Saves the timelines of one financial year. Only the admin can change them; everybody sees the same list.
-route('PUT', '/api/pms/timelines', async ({ actor, body }) => {
-  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the timelines.');
-  const year = text(body.year, 7), y = Number(year.slice(0, 4));
-  if (!/^\d{4}-\d{2}$/.test(year) || (y + 1) % 100 !== Number(year.slice(5))) throw bad('Choose the year of appraisal from the list.');
-  const list = Array.isArray(body.rows) ? body.rows.slice(0, 100) : [];
-  const rows = list.map((r, i) => {
-    const sec = Number(r && r.sec), action = text(r.action, 1500);
-    if (![1, 2].includes(sec)) throw bad('Row ' + (i + 1) + ': choose the section.');
-    if (!action) throw bad('Row ' + (i + 1) + ': enter the action.');
-    return { sec, ord: i + 1, action, by_text: text(r.by, 300), to_text: text(r.to, 300), target: text(r.target, 100) };
+route('POST', '/api/pms/approval/return', async ({ actor, body }) => {
+  const k = pmsKey(body, actor);
+  await pmsAccess(actor, k.emp);
+  const a = (await q(`SELECT * FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  const n = a ? a.stage : 0;
+  if (!a || n < 1 || n > 4 || a['l' + n] !== actor.id) throw new HttpError(403, 'This appraisal is not waiting for you.');
+  const note = text(body.note, 1000);
+  if (!note) throw bad('Write the reason for sending it back.');
+  const r = await q(`UPDATE pms_appraisals SET stage = 0, status = 'Draft', updated_at = now() WHERE id = $1 AND stage = $2`, [a.id, n]);
+  if (!r.rowCount) throw new HttpError(409, 'Someone else just changed this appraisal. Reopen it and try again.');
+  await q(`INSERT INTO pms_approvals (appraisal_id, level, actor, action, note) VALUES ($1, $2, $3, 'returned', $4)`, [a.id, n, actor.id, note]);
+  notifyPms(a, 'returned', a.emp, actor.name, note);
+  return pmsPayload(actor, k.emp, k.type, k.year);
+});
+
+// Finance sets the CHRO (one for everyone) and the Function Head of each department.
+route('POST', '/api/pms/approvers/save', async ({ actor, body }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can set the CHRO and the Function Heads.');
+  const us = (await q(`SELECT id, dept FROM users`)).rows;
+  const ids = new Set(us.map((u) => u.id)), depts = new Set(us.map((u) => u.dept));
+  const chro = text(body.chro, 20);
+  if (chro && !ids.has(chro)) throw bad('Choose the CHRO from the list.');
+  const fhIn = body.fh && typeof body.fh === 'object' ? body.fh : {};
+  const fh = {};
+  Object.keys(fhIn).forEach((d) => {
+    const v = text(fhIn[d], 20);
+    if (!depts.has(d)) throw bad('Unknown department: ' + d.slice(0, 40));
+    if (v && !ids.has(v)) throw bad('Choose the Function Head of ' + d + ' from the list.');
+    if (v) fh[d] = v;
   });
-  await q(`WITH d AS (DELETE FROM pms_timeline_rows WHERE fy = $1::text)
-          INSERT INTO pms_timeline_rows (fy, sec, ord, action, by_text, to_text, target)
-          SELECT $1::text, x.sec, x.ord, x.action, x.by_text, x.to_text, x.target
-            FROM jsonb_to_recordset($2::jsonb) AS x(sec int, ord int, action text, by_text text, to_text text, target text)`, [year, JSON.stringify(rows)]);
-  return pmsTimelines(year);
+  if (chro) await q(`INSERT INTO pms_settings (key, value) VALUES ('chro', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [chro]);
+  else await q(`DELETE FROM pms_settings WHERE key = 'chro'`);
+  await q(`INSERT INTO pms_settings (key, value) VALUES ('fh', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(fh)]);
+  const k = pmsKey(body, actor);
+  return pmsPayload(actor, k.emp, k.type, k.year);
+});
+
+// ----- Page 5: timelines -----
+// Two tables of activities and dates. The finance admin can edit them; everyone else only reads them. The edited copy is kept
+// in pms_settings under the key 'timelines'. In a text, {kraFy} and {apprFy} are replaced by the two years. In an action,
+// a line that starts with ~ is shown indented.
+const TL_DEFAULT = {
+  kraFy: '25-26', apprFy: '24-25',
+  tables: [
+    { rows: [
+      { action: ['Fill KRA form for next year-FY {kraFy}( KRA form attached) and submit'], by: 'Employee', to: 'Immediate Manager', date: '8th March(Saturday)' },
+      { action: ['Review and submit to next level'], by: 'Immediate Manager', to: 'HOD / Function head /ED/MD (who-ever is applicable)', date: '22nd March( Saturday)' },
+      { action: ['Finalize KRAs for entire team and submit'], by: 'HOD / Function Head/ BU Head', to: 'HR', date: '5th April( Saturday)' },
+      { action: ['Sign off on all FY {kraFy} KRAs for all SH team members'], by: 'HOD / Function Head/ BU Head + CHRO', to: '', date: '19th April( Saturday)' },
+    ] },
+    { rows: [
+      { action: ['Complete Self-Assessment and submit:', '~i) Section A - Fill up Column F (Actual Self', '~ii) Section B - Fill up Column C (Actual Self'], by: 'Employee', to: 'Manager', date: '25th March' },
+      { action: ['A) Fill in the below sections :', '~i) Section A - Fill up Column G - J (Actual', '~ii) Section B - Fill up Column D & E (Actual', 'B) Schedule Performance review discussion for FY 23-24', 'C) Share performance + development feedback with the Appraisee', 'D) Enter Comments as Appraiser / Reviewer and specific actions', 'E) Submit Completed Appraisal in SOFT COPY'], by: 'Immediate Manager / Appraiser', to: 'HOD / Function head /ED/MD (who-ever is applicable)', date: '10th April' },
+      { action: ['Submit all Appraisal forms (soft copies) for respective teams'], by: 'HOD / Function Head /ED/MD (who-ever is applicable)', to: 'HR', date: '19th April' },
+      { action: ['Calibration + normalization exercise to arrive at final performance scores. ( This will happen for departments submitting within timelines)'], by: 'HOD / Function Head/ BU Head + CHRO', to: '', date: '1st Week May' },
+    ] },
+  ],
+};
+async function pmsTimelines(actor) {
+  const r = (await q(`SELECT value FROM pms_settings WHERE key = 'timelines'`)).rows[0];
+  let config = TL_DEFAULT, custom = false;
+  if (r) { try { config = JSON.parse(r.value); custom = true; } catch (e) { config = TL_DEFAULT; } }
+  return { config, custom, canEdit: actor.role === 'admin' };
+}
+function cleanTimelines(b) {
+  if (!b || typeof b !== 'object') throw bad('The timelines are missing.');
+  const fy = (v) => { if (typeof v !== 'string' || !/^\d{2}-\d{2}$/.test(v.trim())) throw bad('Write each year like 25-26.'); return v.trim(); };
+  if (!Array.isArray(b.tables) || b.tables.length !== 2) throw bad('There must be two tables.');
+  const tables = b.tables.map((t, ti) => {
+    if (!t || !Array.isArray(t.rows) || t.rows.length < 1 || t.rows.length > 30) throw bad('Table ' + (ti + 1) + ' needs between 1 and 30 rows.');
+    return { rows: t.rows.map((r, ri) => {
+      const where = 'Table ' + (ti + 1) + ', row ' + (ri + 1) + ': ';
+      if (!r || !Array.isArray(r.action)) throw bad(where + 'the action is missing.');
+      const action = r.action.filter((l) => typeof l === 'string' && l.trim() !== '').map((l) => l.trim().slice(0, 300));
+      if (!action.length) throw bad(where + 'the action is empty.');
+      if (action.length > 12) throw bad(where + 'an action can have up to 12 lines.');
+      return { action, by: text(r.by, 200), to: text(r.to, 200), date: text(r.date, 100) };
+    }) };
+  });
+  return { kraFy: fy(b.kraFy), apprFy: fy(b.apprFy), tables };
+}
+route('POST', '/api/pms/timelines/save', async ({ actor, body }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the timelines.');
+  const config = cleanTimelines(body.config);
+  await q(`INSERT INTO pms_settings (key, value) VALUES ('timelines', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(config)]);
+  return pmsTimelines(actor);
+});
+route('POST', '/api/pms/timelines/reset', async ({ actor }) => {
+  if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can change the timelines.');
+  await q(`DELETE FROM pms_settings WHERE key = 'timelines'`);
+  return pmsTimelines(actor);
 });
 
 route('GET', '/api/pms/values/master', async ({ actor }) => {
