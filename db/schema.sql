@@ -252,33 +252,28 @@ BEGIN
   END IF;
 END $$;
 
--- PMS Page 3: comments of the appraiser, reviewer, appraisee and HR (one set for each appraisal).
-ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_appraiser text NOT NULL DEFAULT '';
-ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_action    text NOT NULL DEFAULT '';
-ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_reviewer  text NOT NULL DEFAULT '';
-ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_appraisee text NOT NULL DEFAULT '';
-ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS c_hr        text NOT NULL DEFAULT '';
+-- PMS Page 3 (comments & scoring key): the free-text comments written on an appraisal.
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS cmt_appraiser text NOT NULL DEFAULT '';   -- Appraiser (immediate / reporting manager)
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS cmt_action    text NOT NULL DEFAULT '';   -- Any specific action (training, change in role, project, PIP ...)
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS cmt_reviewer  text NOT NULL DEFAULT '';   -- Reviewer (manager's manager + HOD)
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS cmt_appraisee text NOT NULL DEFAULT '';   -- Appraisee (employee's feedback on the appraisal process)
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS cmt_hr        text NOT NULL DEFAULT '';   -- HR
 
--- PMS Page 4: the approval chain of an appraisal (Manager, HOD, Function Head, CHRO). Rows are written when the appraisal is sent for approval (Page 6).
+-- PMS approval flow (Page 6 sends for approval, Page 4 shows the status).
+-- stage: 0 = draft (with the employee), 1-4 = waiting for L1-L4, 5 = approved. l1-l4 are the approvers chosen when it was submitted.
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS stage smallint NOT NULL DEFAULT 0;
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS l1 text REFERENCES users(id);   -- Manager
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS l2 text REFERENCES users(id);   -- HOD
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS l3 text REFERENCES users(id);   -- Function Head
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS l4 text REFERENCES users(id);   -- CHRO
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS submitted_at timestamptz;
 CREATE TABLE IF NOT EXISTS pms_approvals (
+  id           bigserial PRIMARY KEY,
   appraisal_id text NOT NULL REFERENCES pms_appraisals(id) ON DELETE CASCADE,
-  level        int  NOT NULL CHECK (level BETWEEN 1 AND 4),
-  email        text NOT NULL DEFAULT '',
-  status       text NOT NULL DEFAULT 'Pending',
-  acted_at     timestamptz,
-  remarks      text NOT NULL DEFAULT '',
-  PRIMARY KEY (appraisal_id, level)
+  level        smallint NOT NULL,                 -- 0 = the employee, 1-4 = L1-L4
+  actor        text NOT NULL REFERENCES users(id),
+  action       text NOT NULL,                     -- submitted | approved | returned
+  note         text NOT NULL DEFAULT '',
+  at           timestamptz NOT NULL DEFAULT now()
 );
-
--- PMS Page 5: activities and timelines. Common for everybody, set once for each financial year (the "Year of Appraisal") by the admin.
-CREATE TABLE IF NOT EXISTS pms_timeline_rows (
-  id      bigserial PRIMARY KEY,
-  fy      text NOT NULL,                       -- Year of Appraisal, e.g. 2025-26
-  sec     int  NOT NULL CHECK (sec IN (1, 2)), -- 1 = setting the KRAs for the next year, 2 = completing the full year appraisal
-  ord     int  NOT NULL,
-  action  text NOT NULL,
-  by_text text NOT NULL DEFAULT '',
-  to_text text NOT NULL DEFAULT '',
-  target  text NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS pms_timeline_rows_idx ON pms_timeline_rows (fy, sec, ord);
+CREATE INDEX IF NOT EXISTS pms_approvals_idx ON pms_approvals (appraisal_id, id);
