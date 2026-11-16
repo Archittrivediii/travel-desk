@@ -2,7 +2,7 @@
 require('../lib/env');
 // Sets the details shown on the appraisal form.
 // Usage: npm run user:profile -- <employee code> [--manager <manager's employee code>] [--role "Current role"] [--doj YYYY-MM-DD]
-const { Pool } = require('pg');
+const db = require('../lib/db');
 
 (async () => {
   const args = process.argv.slice(2);
@@ -15,7 +15,7 @@ const { Pool } = require('pg');
   }
   if (doj !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(doj)) { console.error('Write the date of joining as YYYY-MM-DD, for example 2019-04-01.'); process.exit(1); }
   if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set. Check the .env file.'); process.exit(1); }
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = db.createPool();
   try {
     const u = await pool.query(`SELECT id, name FROM users WHERE code = $1`, [code]);
     if (!u.rows[0]) { console.error('No employee has the code ' + code + '.'); process.exitCode = 1; return; }
@@ -28,6 +28,6 @@ const { Pool } = require('pg');
     }
     if (role !== undefined) { await pool.query(`UPDATE users SET cur_role = $2 WHERE id = $1`, [u.rows[0].id, role]); console.log('Current role set to "' + role + '".'); }
     if (doj !== undefined) { await pool.query(`UPDATE users SET doj = $2::date WHERE id = $1`, [u.rows[0].id, doj]); console.log('Date of joining set to ' + doj + '.'); }
-  } catch (e) { console.error('Failed:', e.message); process.exitCode = 1; }
+  } catch (e) { console.error('Failed: ' + db.explain(e)); process.exitCode = 1; }
   finally { await pool.end(); }
 })();

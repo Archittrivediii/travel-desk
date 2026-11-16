@@ -3,7 +3,7 @@
 require('../lib/env');
 const fs = require('fs');
 const path = require('path');
-const { Pool } = require('pg');
+const db = require('../lib/db');
 const { setDefaultPasswords, DEFAULT_PASSWORD } = require('../lib/auth');
 
 (async () => {
@@ -11,7 +11,7 @@ const { setDefaultPasswords, DEFAULT_PASSWORD } = require('../lib/auth');
     console.error('DATABASE_URL is not set. Copy .env.example to .env and edit it.');
     process.exit(1);
   }
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = db.createPool();
   try {
     await pool.query(fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8'));
     console.log('Tables are ready.');
@@ -22,7 +22,7 @@ const { setDefaultPasswords, DEFAULT_PASSWORD } = require('../lib/auth');
       console.log(n + ' users can sign in with the password ' + DEFAULT_PASSWORD + ' and must change it at first sign-in.');
     }
   } catch (e) {
-    console.error('Database setup failed:', e.message);
+    console.error('Database setup failed: ' + db.explain(e));
     process.exitCode = 1;
   } finally {
     await pool.end();

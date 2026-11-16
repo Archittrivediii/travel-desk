@@ -4,15 +4,13 @@ const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { Pool, types } = require('pg');
+const db = require('./lib/db');
 const mail = require('./lib/mail');
 const { hashPassword, verifyPassword, passwordProblem, setDefaultPasswords } = require('./lib/auth');
 
-types.setTypeParser(1082, (v) => v);              // date -> 'YYYY-MM-DD' string
-types.setTypeParser(1700, (v) => parseFloat(v));  // numeric -> number
-
 const PORT = Number(process.env.PORT) || 3000;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set. Copy .env.example to .env and edit it.'); process.exit(1); }
+const pool = db.createPool();                       // local PostgreSQL or Supabase: see lib/db.js
 const q = (text, params) => pool.query(text, params);
 
 class HttpError extends Error {
@@ -762,6 +760,22 @@ route('POST', '/api/pms/approval/return', async ({ actor, body }) => {
   return pmsPayload(actor, k.emp, k.type, k.year);
 });
 
+// The Approval Center: everything that is waiting for the signed-in person right now, oldest first.
+// canSee: HODs and finance always have the tab; anyone else gets it once they are named as an approver on an appraisal.
+route('GET', '/api/pms/center', async ({ actor }) => {
+  const rows = (await q(`SELECT p.emp, p.type, p.year, p.cycle_no, p.stage, p.submitted_at, u.name, u.dept
+                           FROM pms_appraisals p JOIN users u ON u.id = p.emp
+                          WHERE p.stage BETWEEN 1 AND 4
+                            AND (CASE p.stage WHEN 1 THEN p.l1 WHEN 2 THEN p.l2 WHEN 3 THEN p.l3 ELSE p.l4 END) = $1::text
+                          ORDER BY p.submitted_at, u.name`, [actor.id])).rows;
+  const canSee = actor.role !== 'employee' || rows.length > 0 ||
+    !!(await q(`SELECT 1 FROM pms_appraisals WHERE $1::text IN (l1, l2, l3, l4) LIMIT 1`, [actor.id])).rows[0];
+  return {
+    canSee,
+    items: rows.map((r) => ({ emp: r.emp, name: r.name, dept: r.dept, type: r.type, year: r.year, no: r.cycle_no || '', level: r.stage, levelName: PMS_LEVEL_NAMES[r.stage - 1], submittedAt: r.submitted_at })),
+  };
+});
+
 // Finance sets the CHRO (one for everyone) and the Function Head of each department.
 route('POST', '/api/pms/approvers/save', async ({ actor, body }) => {
   if (actor.role !== 'admin') throw new HttpError(403, 'Only the admin can set the CHRO and the Function Heads.');
@@ -1038,9 +1052,10 @@ const server = http.createServer(async (req, res) => {
     await q(`UPDATE users SET email = lower(split_part(name, ' ', 1)) || '@example.com' WHERE email IS NULL`);
     await q(`UPDATE users u SET l4_email = (SELECT h.email FROM users h WHERE h.role = 'manager' AND h.dept = u.dept AND h.id <> u.id ORDER BY h.id LIMIT 1) WHERE u.l4_email IS NULL`);
     await q(`UPDATE users u SET reporting_to = (SELECT h.id FROM users h WHERE h.role = 'manager' AND h.dept = u.dept AND h.id <> u.id ORDER BY h.id LIMIT 1) WHERE u.reporting_to IS NULL`);
-  } catch (e) { console.error('Cannot connect to PostgreSQL:', e.message); process.exit(1); }
+  } catch (e) { console.error('Cannot connect to the database at ' + db.describe() + ':\n' + db.explain(e)); process.exit(1); }
   server.listen(PORT, () => {
     console.log(`Travel Desk is running at http://localhost:${PORT}`);
+    console.log('Database: ' + db.describe() + (db.isSupabaseHost((new URL(process.env.DATABASE_URL)).hostname) ? ' (Supabase)' : ''));
     console.log(mail.configured()
       ? `E-mail is ON: sending through ${process.env.SMTP_HOST}:${process.env.SMTP_PORT || 587} as ${process.env.SMTP_USER || process.env.MAIL_FROM}`
       : 'E-mail is OFF: SMTP_HOST or MAIL_FROM is missing in the .env file, so no notifications are sent.');

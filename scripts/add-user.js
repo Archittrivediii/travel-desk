@@ -4,7 +4,7 @@ require('../lib/env');
 // Usage: npm run user:add -- <code> "<Full name>" <email> <role> <department> [grade] [designation]
 //   role: employee | manager (HOD) | admin (finance)
 // The temporary password is the same as for the example users; they must change it at first sign-in.
-const { Pool } = require('pg');
+const db = require('../lib/db');
 const { hashPassword, DEFAULT_PASSWORD } = require('../lib/auth');
 
 (async () => {
@@ -16,7 +16,7 @@ const { hashPassword, DEFAULT_PASSWORD } = require('../lib/auth');
   if (!['employee', 'manager', 'admin'].includes(role)) { console.error('Role must be employee, manager or admin.'); process.exit(1); }
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { console.error('That e-mail id does not look right.'); process.exit(1); }
   if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set. Check the .env file.'); process.exit(1); }
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = db.createPool();
   try {
     const dup = await pool.query(`SELECT name FROM users WHERE code = $1 OR lower(email) = lower($2)`, [code, email]);
     if (dup.rows[0]) { console.error('That code or e-mail id already belongs to ' + dup.rows[0].name + '.'); process.exitCode = 1; return; }
@@ -26,6 +26,6 @@ const { hashPassword, DEFAULT_PASSWORD } = require('../lib/auth');
       `INSERT INTO users (id, code, name, role, grade, dept, desig, email, password_hash, must_change) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)`,
       [id, code, name, role, grade, dept, desig, email, await hashPassword(DEFAULT_PASSWORD)]);
     console.log(`Added ${name} (${email}) with employee code ${code}. Temporary password: ${DEFAULT_PASSWORD}`);
-  } catch (e) { console.error('Failed:', e.message); process.exitCode = 1; }
+  } catch (e) { console.error('Failed: ' + db.explain(e)); process.exitCode = 1; }
   finally { await pool.end(); }
 })();

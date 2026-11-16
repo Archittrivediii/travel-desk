@@ -277,3 +277,30 @@ CREATE TABLE IF NOT EXISTS pms_approvals (
   at           timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS pms_approvals_idx ON pms_approvals (appraisal_id, id);
+
+-- ===== Hosted databases (Supabase) =====
+-- Supabase publishes every table of the "public" schema through its web API to anyone who has the project's public key.
+-- Travel Desk never uses that API: the server talks to the database directly. So every table below is locked for the API
+-- (row level security on, no policies, no rights for the anon / authenticated roles). The server's own connection is not
+-- affected, because it connects as the owner of the tables. On a local PostgreSQL those roles do not exist and this changes nothing.
+-- IMPORTANT: when you add a table to this file, add its name to the list below.
+DO $$
+DECLARE
+  t text;
+  tables text[] := ARRAY['users','sessions','policy','budgets','trips','expenses','claims','claim_files','claim_approvers',
+                         'mail_outbox','app_migrations','pms_appraisals','pms_kras','pms_settings','pms_value_master',
+                         'pms_value_rows','pms_approvals'];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    IF to_regclass(format('%I.%I', current_schema(), t)) IS NULL THEN CONTINUE; END IF;
+    IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass(format('%I.%I', current_schema(), t))) THEN
+      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      EXECUTE format('REVOKE ALL ON TABLE %I FROM anon', t);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+      EXECUTE format('REVOKE ALL ON TABLE %I FROM authenticated', t);
+    END IF;
+  END LOOP;
+END $$;

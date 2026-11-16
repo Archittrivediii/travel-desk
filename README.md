@@ -21,6 +21,21 @@ npm start
 
 **By hand:** create a database and user yourself, copy `.env.example` to `.env`, set `DATABASE_URL`, then run `npm run db:init` and `npm run db:seed`. `db:seed` replaces everything in the Travel Desk tables, so use it only on a new database.
 
+## Using Supabase
+
+Travel Desk works with a Supabase database. It needs nothing from Supabase except the PostgreSQL connection.
+
+1. In the Supabase dashboard press **Connect** and copy the **Session pooler** connection string. (The "Direct connection" address works only over IPv6, so on most home and office networks it fails. The pooler works everywhere.)
+2. Put your database password where it says `[YOUR-PASSWORD]`, **including the square brackets**. Use a password of letters and numbers only, because symbols such as `@ : / # ? [ ]` break the address. You can reset it under Project Settings > Database.
+3. Set it as `DATABASE_URL` in `.env`, or run `npm run setup` and choose option 2.
+4. Run `npm run db:init` (or just `npm start`: the tables are created and updated on every start), then `npm run db:seed` for example data or `npm run user:add` for real people.
+
+The app turns on SSL for Supabase by itself. The connection is encrypted; the certificate is accepted without checking the issuer, because Supabase signs with its own authority. For full checking download Supabase's certificate (Project Settings > Database > SSL Configuration) and set `DATABASE_SSL_CA` to its path.
+
+**Security.** Supabase publishes the tables of the `public` schema through its web API to anyone who holds the project's public key. Travel Desk does not use that API, so every start it switches row level security on for all of its tables and removes the API roles' rights. The Supabase security advisor then shows "RLS enabled, no policy" notes for each table. That is intended: it means the web API is locked out while the app, which connects directly, keeps working. If you add a table to `db/schema.sql`, add its name to the list at the bottom of that file.
+
+**Free plan.** Supabase pauses a free project after a week without activity; the first sign-in after that waits while it wakes up. If you see "too many clients", lower `DATABASE_POOL_MAX`.
+
 ## Where the data lives
 | Table | Holds |
 |-------|-------|
