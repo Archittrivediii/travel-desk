@@ -159,6 +159,7 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .wgrid th{background:var(--wfield);font-weight:700;font-size:11px;text-transform:none;letter-spacing:0;color:var(--ink);padding:3px 5px;border-bottom:2px solid var(--wstrong);border-right:1px solid var(--wgrid);white-space:normal;vertical-align:bottom;text-align:left}
 .wgrid td{height:26px;padding:0 5px;border-bottom:1px solid var(--wgrid);border-right:1px solid var(--wgrid);white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
 .wgrid td.num,.wgrid th.num{text-align:right}
+.pct{min-width:960px;font-size:12.5px}.pct th{font-size:12.5px}.pct td{height:32px;font-size:12.5px}.pct td.pa{white-space:nowrap}.pct .wbtn{padding:2px 9px;margin-right:3px}.pcn{width:46%;min-width:140px;height:26px}
 .wgrid tr.entry td{padding:0;background:var(--accent-soft)}
 .wgrid td input,.wgrid td select{width:100%;min-width:0;border:0;background:transparent;font:inherit;font-size:11px;color:var(--ink);padding:4px 5px;border-radius:0;text-align:left}
 .wgrid td input[type=number]{text-align:right}
@@ -882,6 +883,31 @@ function viewPmsComments(P,p,can){
     '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||role)+'</span></div>';
   return '<div class="kscroll cs">'+page+'</div>'+foot;
 }
+// ---------- Performance Approval Center ----------
+// Everything that is waiting for the signed-in person. Open shows the form, Approve sends it on (or gives the final approval), Return needs a reason.
+function pcState(){UI.pc=UI.pc||{items:[],canSee:false,loaded:false,loading:false,returning:null};return UI.pc}
+function pcEnsure(){
+  var c=pcState();if(c.loaded||c.loading)return;c.loading=true;
+  api('GET','/api/pms/center').then(function(r){c.items=r.items;c.canSee=r.canSee;c.loaded=true;c.loading=false;render()}).catch(function(e){c.loading=false;c.loaded=true;fail(e)});
+}
+// After an action: refresh the list, and reload the form if it is the one that is open.
+function pcAfter(emp,type,year){
+  var c=pcState();c.loaded=false;c.returning=null;
+  if(UI.pms&&UI.pms.emp===emp&&UI.pms.type===type&&UI.pms.year===year){UI.pms.p=null;UI.pms.dirty=false;pmsOpen(emp,type,year)}
+}
+function viewPmsCenter(){
+  var c=pcState();
+  var rows=c.items.map(function(it,i){
+    var at=' data-emp="'+esc(it.emp)+'" data-type="'+esc(it.type)+'" data-year="'+esc(it.year)+'"',key=it.emp+'|'+it.type+'|'+it.year,act;
+    if(c.returning===key)act='<input class="wf pcn" id="pc-note" maxlength="1000" placeholder="Reason for sending it back" aria-label="Reason for sending it back"> <button class="wbtn" type="button" data-act="pc-send"'+at+'>Send back</button> <button class="wbtn" type="button" data-act="pc-cancel">Cancel</button>';
+    else act='<button class="wbtn" type="button" data-act="pc-open"'+at+'>Open</button> <button class="wbtn" type="button" data-act="pc-approve"'+at+'>Approve</button> <button class="wbtn" type="button" data-act="pc-return"'+at+'>Return</button>';
+    return '<tr><td>'+(i+1)+'</td><td>'+esc(it.no)+'</td><td>'+esc(it.name)+'</td><td>'+esc(it.dept)+'</td><td>'+esc(it.type)+'</td><td>'+esc(it.year)+'</td><td>'+esc(it.submittedAt?new Date(it.submittedAt).toLocaleDateString('en-GB'):'')+'</td><td>'+esc(it.levelName)+'</td><td class="pa">'+act+'</td></tr>';
+  }).join('');
+  var body=c.items.length?'<div class="wgridwrap"><table class="wgrid pct"><colgroup><col style="width:4%"><col style="width:11%"><col style="width:14%"><col style="width:9%"><col style="width:12%"><col style="width:6%"><col style="width:9%"><col style="width:9%"><col style="width:26%"></colgroup>'+
+    '<tr><th>Sno</th><th>PMS No.</th><th>Employee</th><th>Department</th><th>Type</th><th>Year</th><th>Submitted on</th><th>Your level</th><th>Action</th></tr>'+rows+'</table></div>'
+    :'<p class="meta" style="padding:12px;font-size:13px">'+(c.loaded?'Nothing is waiting for you.':'Loading...')+'</p>';
+  return win(body,'Performance Approval Center');
+}
 // ---------- Page 4: submission & approval status ----------
 // Rows 1-4 are the four levels (Manager, HOD, Function Head, CHRO): who they are and where the appraisal stands with them. Hover a status for who and when.
 var PMS_STATUS_LABELS=['Submitted to Manager','Submitted to HOD','Submitted to Function Head','Submitted to CHRO'];
@@ -1099,7 +1125,7 @@ function render(){
   document.getElementById('whoami').textContent=m.name+' ('+(m.role==='manager'?'HOD':m.role==='admin'?'Finance':'Employee')+')';
   if(UI.mod!=='pms'&&UI.mod!=='travel')UI.mod='travel';
   var tabs;
-  if(UI.mod==='pms'){tabs=[['pms','KRA Appraisal']];UI.tab='pms'}
+  if(UI.mod==='pms'){tabs=[['pms','KRA Appraisal']];var pcs=pcState();if(pcs.canSee)tabs.push(['pmsc','Approval Center']);if(UI.tab!=='pmsc'||!pcs.canSee)UI.tab='pms';pcEnsure()}
   else{
     tabs=[['overview','Overview'],['trips','Trips']];
     if(m.role!=='employee')tabs.push(['approvals','Approvals']);
@@ -1112,10 +1138,10 @@ function render(){
   document.getElementById('mods').innerHTML=[['travel','Travel Desk'],['pms','Performance']].map(function(x){return '<button type="button" class="modb" data-act="mod" data-v="'+x[0]+'" aria-pressed="'+(UI.mod===x[0])+'">'+x[1]+'</button>'}).join('');
   var pc=pendingForMe().length+pendingExpForMe().length;
   document.getElementById('tabs').innerHTML=tabs.map(function(t){
-    return '<button class="tab" role="tab" data-act="tab" data-v="'+t[0]+'" aria-selected="'+(UI.tab===t[0])+'">'+t[1]+(t[0]==='approvals'&&pc?'<span class="badge">'+pc+'</span>':'')+(t[0]==='center'&&pendingCenterCount()?'<span class="badge">'+pendingCenterCount()+'</span>':'')+'</button>'}).join('');
-  var v={overview:viewOverview,trips:viewTrips,approvals:viewApprovals,center:viewCenter,pms:viewPms,expenses:viewExpenses,policy:viewPolicy}[UI.tab];
+    return '<button class="tab" role="tab" data-act="tab" data-v="'+t[0]+'" aria-selected="'+(UI.tab===t[0])+'">'+t[1]+(t[0]==='approvals'&&pc?'<span class="badge">'+pc+'</span>':'')+(t[0]==='center'&&pendingCenterCount()?'<span class="badge">'+pendingCenterCount()+'</span>':'')+(t[0]==='pmsc'&&UI.pc&&UI.pc.items.length?'<span class="badge">'+UI.pc.items.length+'</span>':'')+'</button>'}).join('');
+  var v={overview:viewOverview,trips:viewTrips,approvals:viewApprovals,center:viewCenter,pms:viewPms,pmsc:viewPmsCenter,expenses:viewExpenses,policy:viewPolicy}[UI.tab];
   document.getElementById('main').innerHTML=v();
-  document.querySelector('.wrap').classList.toggle('wide',UI.tab==='expenses'||UI.tab==='center'||UI.tab==='pms');
+  document.querySelector('.wrap').classList.toggle('wide',UI.tab==='expenses'||UI.tab==='center'||UI.tab==='pms'||UI.tab==='pmsc');
   updateEst();gridCalc('init');
 }
 
@@ -1128,8 +1154,8 @@ function decide(id,yes){
 document.addEventListener('click',function(e){
   var b=e.target.closest('[data-act]');if(!b)return;
   var a=b.getAttribute('data-act'),id=b.getAttribute('data-id');
-  if(a==='mod'){UI.mod=b.getAttribute('data-v')==='pms'?'pms':'travel';UI.tab=UI.mod==='pms'?'pms':'overview';UI.form=false;UI.expForm=false;UI.report=null;try{localStorage.setItem('td-mod',UI.mod)}catch(x){}}
-  else if(a==='tab'){UI.tab=b.getAttribute('data-v');UI.form=false;UI.expForm=false}
+  if(a==='mod'){if(UI.pc)UI.pc.loaded=false;UI.mod=b.getAttribute('data-v')==='pms'?'pms':'travel';UI.tab=UI.mod==='pms'?'pms':'overview';UI.form=false;UI.expForm=false;UI.report=null;try{localStorage.setItem('td-mod',UI.mod)}catch(x){}}
+  else if(a==='tab'){var nt0=b.getAttribute('data-v');if(UI.mod==='pms'&&UI.tab==='pms'&&nt0!=='pms'&&UI.pms&&UI.pms.dirty&&!window.confirm('You have unsaved changes. Leave without saving?'))return;UI.tab=nt0;UI.form=false;UI.expForm=false;if(nt0==='pmsc'&&UI.pc)UI.pc.loaded=false}
   else if(a==='newtrip'){UI.form=true}
   else if(a==='newexp'){UI.expForm=true}
   else if(a==='cancel'){UI.form=false;UI.expForm=false}
@@ -1176,18 +1202,30 @@ document.addEventListener('click',function(e){
     if(miss){apStat('Enter remarks to reject '+miss.claim+'.');return}
     return run(api('POST','/api/claims/approvals',{decisions:dec}),function(r){return r.decided+' request'+(r.decided===1?'':'s')+(act==='approve'?' approved':' rejected')},function(){UI.apChk={};UI.apRem={};UI.apStat=''});}
   else if(a==='pms-retry'){UI.pms=null}
+  else if(a==='pc-open'){UI.tab='pms';UI.pms=UI.pms||{};UI.pms.dirty=false;UI.pms.page=1;UI.pms.p=null;UI.pms.err=null;pmsOpen(b.getAttribute('data-emp'),b.getAttribute('data-type'),b.getAttribute('data-year'))}
+  else if(a==='pc-approve'){
+    var Qa=b.getAttribute('data-emp'),Qt=b.getAttribute('data-type'),Qy=b.getAttribute('data-year');
+    if(!window.confirm('Approve this appraisal? It moves to the next level, or is fully approved if you are the last approver.'))return;
+    return run(api('POST','/api/pms/approval/submit',{emp:Qa,type:Qt,year:Qy}),function(r){return r.appraisal.stage===5?'Approved':'Approved and sent to the next level'},function(){pcAfter(Qa,Qt,Qy)})}
+  else if(a==='pc-return'){pcState().returning=b.getAttribute('data-emp')+'|'+b.getAttribute('data-type')+'|'+b.getAttribute('data-year');setTimeout(function(){var n=document.getElementById('pc-note');if(n)n.focus()},0)}
+  else if(a==='pc-cancel'){pcState().returning=null}
+  else if(a==='pc-send'){
+    var Ra=b.getAttribute('data-emp'),Rt=b.getAttribute('data-type'),Ry=b.getAttribute('data-year'),rn=document.getElementById('pc-note'),rt=rn?rn.value.trim():'';
+    if(!rt){fail(new Error('Write the reason for sending it back.'));return}
+    if(!window.confirm('Send this appraisal back to the employee?'))return;
+    return run(api('POST','/api/pms/approval/return',{emp:Ra,type:Rt,year:Ry,note:rt}),'Sent back',function(){pcAfter(Ra,Rt,Ry)})}
   else if(a==='ap-submit'){
     var Pe=UI.pms;if(!Pe||!Pe.p||!Pe.p.approval)return;
     if(Pe.dirty){pmsMsg('You have unsaved changes. Save them on their page first, then submit.');return}
     var Ae=Pe.p.approval;
     var ask=Ae.canPick?'Send this appraisal for approval? It goes to L1 first, and you cannot change it until it is sent back to you.':Ae.final?'Approve this appraisal? This is the last step.':'Submit this appraisal to the next level? You cannot change it afterwards.';
     if(!window.confirm(ask))return;
-    return run(api('POST','/api/pms/approval/submit',{emp:Pe.emp,type:Pe.type,year:Pe.year,l1:Pe.ap.l1,l2:Pe.ap.l2,l3:Pe.ap.l3}),function(r){return r.appraisal.stage===5?'Approved':'Submitted'},function(r){pmsInit(r);UI.pms.msg=''})}
+    return run(api('POST','/api/pms/approval/submit',{emp:Pe.emp,type:Pe.type,year:Pe.year,l1:Pe.ap.l1,l2:Pe.ap.l2,l3:Pe.ap.l3}),function(r){return r.appraisal.stage===5?'Approved':'Submitted'},function(r){pmsInit(r);UI.pms.msg='';if(UI.pc)UI.pc.loaded=false})}
   else if(a==='ap-return'){
     var Pf=UI.pms;if(!Pf||!Pf.p)return;var ni=document.getElementById('ap-note'),note=ni?ni.value.trim():'';
     if(!note){pmsMsg('Write the reason for sending it back.');return}
     if(!window.confirm('Send this appraisal back to the employee?'))return;
-    return run(api('POST','/api/pms/approval/return',{emp:Pf.emp,type:Pf.type,year:Pf.year,note:note}),'Sent back',function(r){pmsInit(r);UI.pms.msg=''})}
+    return run(api('POST','/api/pms/approval/return',{emp:Pf.emp,type:Pf.type,year:Pf.year,note:note}),'Sent back',function(r){pmsInit(r);UI.pms.msg='';if(UI.pc)UI.pc.loaded=false})}
   else if(a==='aps-save'){
     var Pg=UI.pms;if(!Pg||!Pg.aps)return;
     return run(api('POST','/api/pms/approvers/save',{emp:Pg.emp,type:Pg.type,year:Pg.year,chro:Pg.aps.chro,fh:Pg.aps.fh}),'Approvers saved',function(r){pmsInit(r);UI.pms.msg='Approvers saved.'})}
@@ -1354,9 +1392,9 @@ function pwScreen(forced){
   showScreen('pw');focusId('p-cur');
 }
 function start(){return load().then(function(){try{UI.mod=localStorage.getItem('td-mod')==='pms'?'pms':'travel'}catch(x){}UI.tab=UI.mod==='pms'?'pms':'overview';showScreen('app');render()})}
-function sessionEnded(){UI.uid='';UI.pms=null;S=emptyState();loginScreen('Your session ended. Sign in again.')}
+function sessionEnded(){UI.uid='';UI.pms=null;UI.pc=null;S=emptyState();loginScreen('Your session ended. Sign in again.')}
 function signOut(){
-  api('POST','/api/logout').catch(function(){}).then(function(){UI.uid='';UI.pms=null;S=emptyState();UI.tab='overview';UI.form=false;UI.expForm=false;UI.step='enter';UI.expTab='new';UI.last=null;loginScreen()});
+  api('POST','/api/logout').catch(function(){}).then(function(){UI.uid='';UI.pms=null;UI.pc=null;S=emptyState();UI.tab='overview';UI.form=false;UI.expForm=false;UI.step='enter';UI.expTab='new';UI.last=null;loginScreen()});
 }
 function doLogin(){
   var code=document.getElementById('l-code').value.trim(),pw=document.getElementById('l-pw').value,err=document.getElementById('l-err'),btn=document.getElementById('l-btn');
