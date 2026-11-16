@@ -70,6 +70,29 @@ People sign in with their **employee code** (the `code` column in `users`) and a
   Add `--keep` to let them keep that password.
 - When you add real employees with `INSERT INTO users ...`, give them a password with the command above. Until then they cannot sign in.
 
+## Putting it on the internet
+
+Travel Desk is an ordinary Node.js program, so any host that runs Node works (Render, Railway, Fly.io, or your company's own server). The data stays in your Supabase database. Example with Render:
+
+1. Push the project to GitHub. The `.env` file is never uploaded (it is in `.gitignore`), so your password stays private.
+2. In Render choose **New > Web Service**, connect the GitHub repository and the `main` branch.
+3. Settings: Language **Node**, Build Command `npm install`, Start Command `npm start`, Health Check Path `/api/health`. Pick the region closest to your Supabase project, because the app talks to the database on every click. A free instance goes to sleep when nobody uses it and the first visit afterwards is slow, so use a paid instance if people should never wait.
+4. Add these environment variables (Render supplies `PORT` itself, so do not set it):
+
+| Name | Value |
+| --- | --- |
+| `DATABASE_URL` | the Supabase **Session pooler** string, with your real password |
+| `COOKIE_SECURE` | `true` |
+| `TRUST_PROXY` | `1` |
+| `ALLOW_RESET` | `false` |
+| `APP_URL` | the address Render gives you, for example `https://travel-desk.onrender.com` (used in the e-mails) |
+
+5. Press **Create Web Service**. When it is live, open the address and sign in. Every push to `main` deploys again by itself. Look at the first lines of the log: the app prints a `WARNING` if a setting is unsafe for a live site.
+
+**Never run `npm run db:seed` against the live database.** It replaces everything with the example data. Add real people from your own computer with `npm run user:add` (your `.env` points at the same Supabase database), or from the same command on the host's shell.
+
+`TRUST_PROXY=1` tells the app that one proxy (the host's) sits in front of it. Without it the limit on wrong passwords treats every visitor as one person, so a stranger could lock a colleague out with a few wrong tries. Set it only when the app really runs behind such a proxy. Some hosts block outgoing e-mail on their free plans; if notifications do not arrive, check the host's rules or use a paid plan.
+
 ## Before real use
 - Serve the app over HTTPS (for example behind your company web server or reverse proxy) and set `COOKIE_SECURE=true` in `.env`, so the sign-in cookie never travels unencrypted.
 - Leave `ALLOW_RESET=false` on the real system. When it is `true`, a finance user can open `/?reset` and wipe all data back to the examples.

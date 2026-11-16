@@ -923,10 +923,22 @@ async function getSession(req) {
   return r.rows[0] ? { tokenHash, user: r.rows[0] } : null;
 }
 
+// Behind a hosting provider's proxy every request arrives from the proxy's own address, so the limit below would be shared by everybody
+// and anyone could lock a colleague out. TRUST_PROXY=1 (the number of proxies in front of the app) makes it use the visitor's address
+// that the proxy recorded. Leave it unset when the app is reached directly: the header can then be forged by the visitor.
+function clientIp(req) {
+  const hops = process.env.TRUST_PROXY === 'true' ? 1 : parseInt(process.env.TRUST_PROXY, 10) || 0;
+  if (hops > 0) {
+    const list = String(req.headers['x-forwarded-for'] || '').split(',').map((v) => v.trim()).filter(Boolean);
+    if (list.length >= hops) return list[list.length - hops];
+  }
+  return req.socket.remoteAddress || '';
+}
+
 route('POST', '/api/login', async ({ body, req, res }) => {
   const code = text(body.code, 20);
   const password = typeof body.password === 'string' ? body.password.slice(0, 200) : '';
-  const key = (req.socket.remoteAddress || '') + '|' + code.toLowerCase();
+  const key = clientIp(req) + '|' + code.toLowerCase();
   if (tooMany(key)) throw new HttpError(429, 'Too many attempts. Wait a few minutes and try again.');
   const r = await q(`SELECT id, password_hash FROM users WHERE code = $1`, [code]);
   const u = r.rows[0];
@@ -1055,6 +1067,11 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error('Cannot connect to the database at ' + db.describe() + ':\n' + db.explain(e)); process.exit(1); }
   server.listen(PORT, () => {
     console.log(`Travel Desk is running at http://localhost:${PORT}`);
+    // Settings that are unsafe on a live site. APP_URL starting with https:// means this is the real, public copy.
+    const live = /^https:/i.test(process.env.APP_URL || '');
+    if (live && process.env.COOKIE_SECURE !== 'true') console.warn('WARNING: APP_URL is https but COOKIE_SECURE is not true. Set COOKIE_SECURE=true so the sign-in cookie is only sent encrypted.');
+    if (live && process.env.ALLOW_RESET === 'true') console.warn('WARNING: ALLOW_RESET=true lets a finance user wipe all data from this live site. Set it to false.');
+    if (live && !process.env.TRUST_PROXY) console.warn('NOTE: behind a hosting provider set TRUST_PROXY=1, otherwise the login limit treats every visitor as one person.');
     console.log('Database: ' + db.describe() + (db.isSupabaseHost((new URL(process.env.DATABASE_URL)).hostname) ? ' (Supabase)' : ''));
     console.log(mail.configured()
       ? `E-mail is ON: sending through ${process.env.SMTP_HOST}:${process.env.SMTP_PORT || 587} as ${process.env.SMTP_USER || process.env.MAIL_FROM}`
