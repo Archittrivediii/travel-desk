@@ -278,6 +278,36 @@ CREATE TABLE IF NOT EXISTS pms_approvals (
 );
 CREATE INDEX IF NOT EXISTS pms_approvals_idx ON pms_approvals (appraisal_id, id);
 
+-- PMS: the PDF on Page 1 and the versions of a form.
+-- version = number of the last version sent for approval (0 = never sent). The number goes up each time the employee submits.
+-- file_id = the PDF attached now (pms_files.id). A PDF that an earlier version used stays in pms_files for the history.
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 0;
+ALTER TABLE pms_appraisals ADD COLUMN IF NOT EXISTS file_id bigint;
+UPDATE pms_appraisals SET version = 1 WHERE stage > 0 AND version = 0;   -- forms that were already sent before versions existed
+CREATE TABLE IF NOT EXISTS pms_files (
+  id           bigserial PRIMARY KEY,
+  appraisal_id text NOT NULL REFERENCES pms_appraisals(id) ON DELETE CASCADE,
+  name         text NOT NULL,
+  size         integer NOT NULL,
+  data         text NOT NULL,                     -- file content, base64
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pms_files_idx ON pms_files (appraisal_id);
+-- One row per finished round (sent back, or approved): a copy of the form as it stood when the round ended.
+CREATE TABLE IF NOT EXISTS pms_versions (
+  id           bigserial PRIMARY KEY,
+  appraisal_id text NOT NULL REFERENCES pms_appraisals(id) ON DELETE CASCADE,
+  version      integer NOT NULL,
+  submitted_at timestamptz,
+  submitted_by text REFERENCES users(id),
+  outcome      text NOT NULL,                     -- Returned | Approved
+  ended_at     timestamptz NOT NULL DEFAULT now(),
+  ended_by     text REFERENCES users(id),
+  note         text NOT NULL DEFAULT '',
+  snapshot     jsonb NOT NULL,                    -- goals, values, comments and the PDF of that version
+  UNIQUE (appraisal_id, version)
+);
+
 -- ===== Hosted databases (Supabase) =====
 -- Supabase publishes every table of the "public" schema through its web API to anyone who has the project's public key.
 -- Travel Desk never uses that API: the server talks to the database directly. So every table below is locked for the API
@@ -289,7 +319,7 @@ DECLARE
   t text;
   tables text[] := ARRAY['users','sessions','policy','budgets','trips','expenses','claims','claim_files','claim_approvers',
                          'mail_outbox','app_migrations','pms_appraisals','pms_kras','pms_settings','pms_value_master',
-                         'pms_value_rows','pms_approvals'];
+                         'pms_value_rows','pms_approvals','pms_files','pms_versions'];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF to_regclass(format('%I.%I', current_schema(), t)) IS NULL THEN CONTINUE; END IF;
