@@ -159,6 +159,15 @@ td input{width:96px;background:var(--surface-2);border:1px solid var(--line);bor
 .wgrid th{background:var(--wfield);font-weight:700;font-size:11px;text-transform:none;letter-spacing:0;color:var(--ink);padding:3px 5px;border-bottom:2px solid var(--wstrong);border-right:1px solid var(--wgrid);white-space:normal;vertical-align:bottom;text-align:left}
 .wgrid td{height:26px;padding:0 5px;border-bottom:1px solid var(--wgrid);border-right:1px solid var(--wgrid);white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
 .wgrid td.num,.wgrid th.num{text-align:right}
+.ppdf{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:6px 8px;border-top:1px solid var(--wgrid);font-size:12px;color:var(--ink);background:var(--wbg)}
+.ppl{font-weight:700}.pdfs{opacity:.8}.pph{opacity:.75;flex-basis:100%;font-size:11px}
+.pdfl{color:var(--accent,#0a5b73);text-decoration:underline;word-break:break-all}
+.pver{font-size:11px;font-weight:700;white-space:nowrap}
+.vwrap{padding:6px 8px 14px;font-size:12px;color:var(--ink)}
+.vhbar{display:flex;align-items:center;gap:12px;margin-bottom:8px}.vht{font-weight:700}
+.vsum{margin:6px 0 8px;line-height:1.5}.vro{opacity:.7;font-size:11px}
+.vtbl{min-width:760px;font-size:12px}.vtbl th{font-size:12px;text-transform:none;letter-spacing:0;white-space:normal}.vtbl td{white-space:normal;vertical-align:top}.vtbl .vtot td{font-weight:700}
+.vcm{margin-top:8px;border:1px solid var(--wgrid);background:var(--wfield);padding:6px 8px;line-height:1.4;white-space:pre-wrap}.vcm b{display:block;margin-bottom:2px}
 .pct{min-width:960px;font-size:12.5px}.pct th{font-size:12.5px}.pct td{height:32px;font-size:12.5px}.pct td.pa{white-space:nowrap}.pct .wbtn{padding:2px 9px;margin-right:3px}.pcn{width:46%;min-width:140px;height:26px}
 .wgrid tr.entry td{padding:0;background:var(--accent-soft)}
 .wgrid td input,.wgrid td select{width:100%;min-width:0;border:0;background:transparent;font:inherit;font-size:11px;color:var(--ink);padding:4px 5px;border-radius:0;text-align:left}
@@ -754,7 +763,7 @@ function pmsInit(p){
   UI.pms=UI.pms||{};UI.pms.p=p;UI.pms.dirty=false;UI.pms.loading=false;UI.pms.err='';UI.pms.msg='';
   UI.pms.emp=p.employee.id;UI.pms.type=p.appraisal.type;UI.pms.year=p.appraisal.year;
   UI.pms.vrows=((p.values&&p.values.rows)||[]).map(function(r){return {ord:r.ord,lvl:r.lvl,code:r.code||'',label:r.label,marks:pnum(r.marks),selfAch:pnum(r.selfAch)==null?'':pnum(r.selfAch),mgrAch:pnum(r.mgrAch)==null?'':pnum(r.mgrAch),remarks:r.remarks||''}});
-  UI.pms.vweight=p.values&&p.values.weight!=null?Number(p.values.weight):20;UI.pms.page=UI.pms.page||1;UI.pms.editor=null;UI.pms.tlEdit=null;
+  UI.pms.vweight=p.values&&p.values.weight!=null?Number(p.values.weight):20;UI.pms.page=UI.pms.page||1;UI.pms.editor=null;UI.pms.tlEdit=null;UI.pms.vhOpen=false;UI.pms.vview=null;
   UI.pms.ap={l1:'',l2:'',l3:''};((p.approval&&p.approval.chain)||[]).slice(0,3).forEach(function(c,i){UI.pms.ap['l'+(i+1)]=c.id||''});
   UI.pms.aps=p.approval&&p.approval.settings?{chro:p.approval.settings.chro||'',fh:Object.assign({},p.approval.settings.fh)}:null;
   UI.pms.cm=Object.assign({appraiser:'',action:'',reviewer:'',appraisee:'',hr:''},p.comments||{});
@@ -804,18 +813,19 @@ function viewPms(){
   if(P.page===4)return win(tabs+hdr+viewPmsStatus(P,p),'KRA');
   if(P.page===5)return win(tabs+hdr+viewPmsTimelines(P,p),'KRA');
   if(P.page===6)return win(tabs+hdr+viewPmsSend(P,p),'KRA');
+  if(P.vhOpen)return win(tabs+hdr+viewPmsVersions(P,p),'KRA');
   var cols=[3,24,8,6,7,6,8,8,8,6,6,10];
   var th='<thead><tr class="kl">'+'ABCDEFGHIJKL'.split('').map(function(l){return '<th>('+l+')</th>'}).join('')+'</tr><tr class="kh"><th></th><th>Key Result Area\'s (Quantitative Goals)</th><th>Source</th><th>Threshold</th><th>Planned Achievement /Target</th><th>Weightage of the KRA</th><th>Timeline/ Periodicity</th><th>Actual Self rating</th><th>Actual Manager rating</th><th>% age</th><th>Score</th><th>Specific Remarks</th></tr>'+
     '<tr class="ks"><th>S. No</th><th></th><th>WFX/Excel Sheet/ E-mails/ Files/ Hardcopy Record etc.</th><th>% achievement below which score will be zero.</th><th>INR/USD/ %age/ Score/ Raw numbers</th><th>Total = 100%</th><th>Monthly/Daily/ H1/H2/ Yearly/ ongoing</th><th>Achievement (As per appraisee)</th><th>Achievement (As per Appraiser)</th><th>Achievement in %age</th><th>Net score</th><th></th></tr></thead>';
   var body=P.rows.map(function(r,i){return pmsRowHtml(r,i,can)}).join('')||'<tr><td colspan="12" class="emptyc">No Key Result Areas yet. Press Add to create the first one.</td></tr>';
   var grid='<div class="kscroll"><table class="kgrid"><colgroup>'+cols.map(function(w){return '<col style="width:'+w+'%">'}).join('')+'</colgroup>'+th+'<tbody id="pms-body">'+body+'</tbody></table></div>';
   var role=p.blocked?p.blocked:!can.rate?'Setting goals: add the Key Result Areas, targets and weightage. Ratings are entered in the Mid Year and Annual appraisals.':can.self&&!can.mgr?'You are filling in your own appraisal: you can edit the goals and your self rating.':(can.mgr?'You are the reporting manager: you can edit the goals and the manager rating.':(p.approval?p.approval.text:''));
-  var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><button class="wbtn" type="button" data-act="pms-save"'+(p.blocked?' disabled':'')+'>Save</button><button class="wbtn" type="button" data-act="pms-add"'+(p.blocked?' disabled':'')+'>Add</button>'+
+  var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><span class="pver" title="The version goes up each time the form is submitted for approval">Version '+esc(pmsVerLabel(p))+'</span><button class="wbtn" type="button" data-act="ver-hist">Versions</button><button class="wbtn" type="button" data-act="pms-save"'+(p.blocked?' disabled':'')+'>Save</button><button class="wbtn" type="button" data-act="pms-add"'+(p.blocked?' disabled':'')+'>Add</button>'+
     '<span class="pmsg" id="pms-msg" role="status">'+esc(P.msg||role)+'</span>'+
     '<span class="ptot">Total = <input class="wf" id="pms-w" readonly aria-label="Total weightage" value="'+tt.w.toFixed(2)+'"'+(Math.abs(tt.w-100)>0.001?' style="color:var(--bad)"':'')+'></span>'+
     '<span class="ptot">Score <input class="wf" id="pms-s" readonly aria-label="Total score" value="'+tt.score.toFixed(2)+'"><input class="wf" id="pms-s5" readonly title="Final score = Total score / 100 &times; 80" aria-label="Final score" value="'+(tt.score/100*80).toFixed(2)+'"></span></div>';
   setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsStick();pmsFit()},0);
-  return win(tabs+hdr+grid+foot,'KRA');
+  return win(tabs+hdr+grid+viewPmsPdf(P,p,can)+foot,'KRA');
 }
 
 function pmsValTotals(){
@@ -882,6 +892,57 @@ function viewPmsComments(P,p,can){
   var foot='<div class="pfoot"><input class="wf pno" readonly aria-label="PMS number" placeholder="Generated on save" value="'+esc(p.appraisal.no||'')+'"><button class="wbtn" type="button" data-act="pms-save"'+(off?' disabled':'')+'>Save</button>'+
     '<span class="pmsg pnote" id="pms-msg" role="status">'+esc(P.msg||role)+'</span></div>';
   return '<div class="kscroll cs">'+page+'</div>'+foot;
+}
+// ---------- Page 1: the PDF, and the versions of the form ----------
+// The version is the number of the last submit. While the form is with the employee the next number is shown as a draft.
+function pmsVerLabel(p){
+  var n=(p.version&&p.version.number)||0,st=p.appraisal.stage||0;
+  if(st===0)return 'v'+(n+1)+' (draft)';
+  if(st===5)return 'v'+n+' (approved)';
+  return 'v'+n;
+}
+function pmsFileSize(n){return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB'}
+function pmsDate(x){return x?new Date(x).toLocaleDateString('en-GB'):''}
+function viewPmsPdf(P,p,can){
+  var f=p.file,editable=!!can.self&&!!p.appraisal.no&&!p.blocked;
+  var info=f?'<a class="pdfl" href="/api/pms/file/'+esc(f.id)+'" target="_blank" rel="noopener" download title="Download this PDF">'+esc(f.name)+'</a> <span class="pdfs">('+pmsFileSize(f.size)+')</span>':'<span class="pdfs">No PDF attached yet</span>';
+  var btns=editable?'<input type="file" id="pdf-in" data-pdf accept="application/pdf,.pdf" hidden><button class="wbtn" type="button" data-act="pdf-pick">'+(f?'Replace PDF':'Attach PDF')+'</button>'+(f?'<button class="wbtn" type="button" data-act="pdf-del">Remove</button>':''):'';
+  var hint=editable?'Attach one PDF with what you did on the tasks given by the company (up to 5 MB). It is needed to submit.':(can.self&&!p.appraisal.no?'Save the goals first (this creates the PMS number), then attach the PDF.':'');
+  return '<div class="ppdf"><span class="ppl">Supporting PDF</span>'+info+btns+(hint?'<span class="pph">'+esc(hint)+'</span>':'')+'</div>';
+}
+function pdfPicked(inp){
+  var P=UI.pms,f=inp.files&&inp.files[0];inp.value='';
+  if(!P||!P.p||!f)return;
+  if(P.dirty){pmsMsg('You have unsaved changes. Save them first, then attach the PDF.');return}
+  if(!/\.pdf$/i.test(f.name)){pmsMsg('Choose a PDF file.');return}
+  if(f.size>5*1024*1024){pmsMsg('The PDF must be 5 MB or smaller.');return}
+  var rd=new FileReader();
+  rd.onload=function(){run(api('POST','/api/pms/file/upload',{emp:P.emp,type:P.type,year:P.year,name:f.name,data:String(rd.result).split(',')[1]||''}),'PDF attached',function(r){pmsInit(r);UI.pms.msg='PDF attached.'})};
+  rd.onerror=function(){pmsMsg('The file could not be read.')};
+  rd.readAsDataURL(f);
+}
+function viewPmsVersions(P,p){
+  setTimeout(function(){var g=document.querySelector('.kscroll');if(g)g.style.height='';pmsFit()},0);
+  var V=p.version||{number:0,history:[]},st=p.appraisal.stage||0,key=function(n){return ' data-n="'+n+'"'};
+  var head='<div class="vhbar"><button class="wbtn" type="button" data-act="'+(P.vview?'ver-back':'ver-close')+'">'+(P.vview?'Back to the list':'Back to the form')+'</button><span class="vht">Versions of this form &middot; '+esc(p.appraisal.type)+' '+esc(p.appraisal.year)+'</span></div>';
+  if(P.vview){
+    var v=P.vview,sn=v.snapshot||{kras:[],comments:{}},tot=0,tw=0;
+    var rows=sn.kras.map(function(r,i){var c=pmsCalc(r);tot+=c.score;tw+=pnum(r.weight)||0;return '<tr><td>'+(i+1)+'</td><td>'+esc(r.kra)+'</td><td>'+esc(r.source)+'</td><td class="num">'+esc(r.threshold==null?'':r.threshold)+'</td><td class="num">'+esc(r.target==null?'':r.target)+'</td><td class="num">'+esc(r.weight==null?'':r.weight)+'</td><td>'+esc(r.timeline)+'</td><td class="num">'+esc(r.selfAch==null?'':r.selfAch)+'</td><td class="num">'+esc(r.mgrAch==null?'':r.mgrAch)+'</td><td class="num">'+c.pct.toFixed(2)+'</td><td class="num">'+c.score.toFixed(2)+'</td><td>'+esc(r.remarks||'')+'</td></tr>'}).join('');
+    var tbl='<div class="wgridwrap"><table class="wgrid vtbl"><tr><th>S. No</th><th>Key Result Area</th><th>Source</th><th>Threshold</th><th>Target</th><th>Weightage</th><th>Timeline</th><th>Self rating</th><th>Manager rating</th><th>% age</th><th>Score</th><th>Remarks</th></tr>'+rows+
+      '<tr class="vtot"><td></td><td>Total</td><td></td><td></td><td></td><td class="num">'+tw.toFixed(2)+'</td><td></td><td></td><td></td><td></td><td class="num">'+tot.toFixed(2)+'</td><td></td></tr></table></div>';
+    var cm=sn.comments||{},labels=[['appraiser','Appraiser comments'],['action','Specific action'],['reviewer','Reviewer comments'],['appraisee','Appraisee comments'],['hr','HR comment']];
+    var cmh=labels.filter(function(l){return cm[l[0]]}).map(function(l){return '<div class="vcm"><b>'+l[1]+'</b><div>'+esc(cm[l[0]])+'</div></div>'}).join('');
+    var pdf=sn.file?'<a class="pdfl" href="/api/pms/file/'+esc(sn.file.id)+'" target="_blank" rel="noopener" download>'+esc(sn.file.name)+'</a> <span class="pdfs">('+pmsFileSize(sn.file.size)+')</span>':'<span class="pdfs">No PDF</span>';
+    var sum='<div class="vsum"><b>Version '+v.version+'</b> &middot; '+esc(v.outcome)+(v.endedBy?' by '+esc(v.endedBy):'')+' on '+esc(pmsDate(v.endedAt))+(v.submittedBy?' &middot; submitted by '+esc(v.submittedBy)+' on '+esc(pmsDate(v.submittedAt)):'')+(v.note?'<div>Reason: '+esc(v.note)+'</div>':'')+'<div>Supporting PDF: '+pdf+'</div><div class="vro">This is a read-only copy of the form as it stood when this version ended.</div></div>';
+    return '<div class="kscroll cs"><div class="vwrap">'+head+sum+tbl+cmh+'</div></div>';
+  }
+  var cur='';
+  if(st===0)cur='<tr><td>v'+(V.number+1)+'</td><td></td><td></td><td>Draft (being prepared)</td><td></td><td></td><td></td><td></td></tr>';
+  else if(!V.history.some(function(h){return h.version===V.number}))cur='<tr><td>v'+V.number+'</td><td></td><td></td><td>'+(st===5?'Approved (no earlier copy was kept)':'With the approvers now')+'</td><td></td><td></td><td></td><td></td></tr>';
+  var rows2=V.history.map(function(h){return '<tr><td>v'+h.version+'</td><td>'+esc(h.submittedBy||'')+'</td><td>'+esc(pmsDate(h.submittedAt))+'</td><td>'+esc(h.outcome)+'</td><td>'+esc(pmsDate(h.endedAt))+'</td><td>'+esc(h.endedBy||'')+'</td><td>'+esc(h.note||'')+'</td><td><button class="wbtn" type="button" data-act="ver-view"'+key(h.version)+'>View</button></td></tr>'}).join('');
+  var empty=!cur&&!rows2?'<p class="meta" style="padding:10px">No version has been submitted yet. Version 1 is created when the form is submitted for approval.</p>':'';
+  var tbl2='<div class="wgridwrap"><table class="wgrid vtbl"><tr><th>Version</th><th>Submitted by</th><th>Submitted on</th><th>Result</th><th>Closed on</th><th>Closed by</th><th>Reason / note</th><th>Action</th></tr>'+cur+rows2+'</table></div>';
+  return '<div class="kscroll cs"><div class="vwrap">'+head+(cur||rows2?tbl2:empty)+'</div></div>';
 }
 // ---------- Performance Approval Center ----------
 // Everything that is waiting for the signed-in person. Open shows the form, Approve sends it on (or gives the final approval), Return needs a reason.
@@ -1214,6 +1275,18 @@ document.addEventListener('click',function(e){
     if(!rt){fail(new Error('Write the reason for sending it back.'));return}
     if(!window.confirm('Send this appraisal back to the employee?'))return;
     return run(api('POST','/api/pms/approval/return',{emp:Ra,type:Rt,year:Ry,note:rt}),'Sent back',function(){pcAfter(Ra,Rt,Ry)})}
+  else if(a==='pdf-pick'){var pi=document.getElementById('pdf-in');if(pi)pi.click();return}
+  else if(a==='pdf-del'){
+    var Pz=UI.pms;if(!Pz||!Pz.p)return;
+    if(Pz.dirty){pmsMsg('You have unsaved changes. Save them first.');return}
+    if(!window.confirm('Remove the attached PDF?'))return;
+    return run(api('POST','/api/pms/file/delete',{emp:Pz.emp,type:Pz.type,year:Pz.year}),'PDF removed',function(r){pmsInit(r);UI.pms.msg='PDF removed.'})}
+  else if(a==='ver-hist'){var Pv=UI.pms;if(!Pv)return;Pv.vhOpen=true;Pv.vview=null}
+  else if(a==='ver-close'){var Pw=UI.pms;if(!Pw)return;Pw.vhOpen=false;Pw.vview=null}
+  else if(a==='ver-back'){var Px=UI.pms;if(!Px)return;Px.vview=null}
+  else if(a==='ver-view'){
+    var Py=UI.pms;if(!Py||!Py.p)return;
+    api('POST','/api/pms/version/open',{emp:Py.emp,type:Py.type,year:Py.year,version:Number(b.getAttribute('data-n'))}).then(function(r){Py.vview=r;render()}).catch(fail);return}
   else if(a==='ap-submit'){
     var Pe=UI.pms;if(!Pe||!Pe.p||!Pe.p.approval)return;
     if(Pe.dirty){pmsMsg('You have unsaved changes. Save them on their page first, then submit.');return}
@@ -1245,7 +1318,7 @@ document.addEventListener('click',function(e){
   else if(a==='pms-page'){
     var P4=UI.pms;if(!P4||!P4.p)return;var pn=Math.min(6,Math.max(1,Number(b.getAttribute('data-v'))||1));if(pn===P4.page)return;
     if(P4.dirty){if(!window.confirm('You have unsaved changes. Leave without saving?'))return;pmsInit(P4.p)}
-    UI.pms.page=pn;UI.pms.editor=null;UI.pms.msg=''}
+    UI.pms.page=pn;UI.pms.editor=null;UI.pms.msg='';UI.pms.vhOpen=false;UI.pms.vview=null}
   else if(a==='ve-open'){
     return run(api('GET','/api/pms/values/master'),null,function(m){UI.pms.editor={weight:m.weight,msg:'',rows:m.rows.map(function(r){return {lvl:r.lvl,code:r.code||'',label:r.label,marks:pnum(r.marks)==null?'':pnum(r.marks)}})}})}
   else if(a==='ve-cancel'){UI.pms.editor=null}
@@ -1297,6 +1370,7 @@ document.addEventListener('input',function(e){
 });
 document.addEventListener('change',function(e){
   var t=e.target;
+  if(t.hasAttribute&&t.hasAttribute('data-pdf')){pdfPicked(t);return}
   if(t.hasAttribute&&t.hasAttribute('data-kf')){pmsEdit(t);return}
   if(t.hasAttribute&&t.hasAttribute('data-apl')){var Pq=UI.pms;if(Pq&&Pq.ap)Pq.ap['l'+t.getAttribute('data-apl')]=t.value;return}
   if(t.hasAttribute&&t.hasAttribute('data-aps')){var Pr=UI.pms;if(Pr&&Pr.aps)Pr.aps.chro=t.value;return}

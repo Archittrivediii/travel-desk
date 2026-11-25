@@ -400,7 +400,7 @@ async function pmsPayload(actor, empId, type, year) {
                           WHERE u.id <> $1::text AND (u.reporting_to = $1::text OR EXISTS (SELECT 1 FROM pms_appraisals p WHERE p.emp = u.id AND $1::text IN (p.l1, p.l2, p.l3, p.l4)))
                           ORDER BY u.name`, [actor.id])).rows;
   const no = await pmsNumber(empId, year);
-  const a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, submitted_at, values_weight, cmt_appraiser, cmt_action, cmt_reviewer, cmt_appraisee, cmt_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
+  const a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, submitted_at, version, file_id, values_weight, cmt_appraiser, cmt_action, cmt_reviewer, cmt_appraisee, cmt_hr FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [empId, type, year])).rows[0];
   let kras = a ? (await q(`SELECT id::text AS id, sno, kra, source, threshold, target, weight, timeline, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks
                              FROM pms_kras WHERE appraisal_id = $1 ORDER BY sno, id`, [a.id])).rows : [];
   // Mid-year and annual forms start from everything already entered (goals, ratings, remarks), the Annual one from the Mid Year form; they are stored when the form is saved.
@@ -415,7 +415,11 @@ async function pmsPayload(actor, empId, type, year) {
   const comments = { appraiser: a ? a.cmt_appraiser : '', action: a ? a.cmt_action : '', reviewer: a ? a.cmt_reviewer : '', appraisee: a ? a.cmt_appraisee : '', hr: a ? a.cmt_hr : '' };
   const R = pmsRights(actor, acc, a);
   const approval = await pmsApprovalInfo(actor, acc, emp, a, no);
-  return { employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft', stage: a ? a.stage : 0 }, kras, can: { self: R.self, mgr: R.mgr, rev: R.rev, hr: R.hr }, blocked, values, comments, timelines, approval };
+  const file = a && a.file_id ? (await q(`SELECT id::text AS id, name, size FROM pms_files WHERE id = $1`, [a.file_id])).rows[0] || null : null;
+  const history = a ? (await q(`SELECT v.version, v.submitted_at AS "submittedAt", su.name AS "submittedBy", v.outcome, v.ended_at AS "endedAt", eu.name AS "endedBy", v.note
+                                  FROM pms_versions v LEFT JOIN users su ON su.id = v.submitted_by LEFT JOIN users eu ON eu.id = v.ended_by
+                                 WHERE v.appraisal_id = $1 ORDER BY v.version DESC`, [a.id])).rows : [];
+  return { file, version: { number: a ? a.version : 0, history }, employee: emp, team, appraisal: { id: a ? a.id : null, no, type, year, status: a ? a.status : 'Draft', stage: a ? a.stage : 0 }, kras, can: { self: R.self, mgr: R.mgr, rev: R.rev, hr: R.hr }, blocked, values, comments, timelines, approval };
 }
 
 
@@ -664,21 +668,50 @@ async function pmsApprovalInfo(actor, acc, emp, a, no) {
   const next = stage >= 1 && stage <= 4 ? [1, 2, 3, 4].find((n) => n > stage && ids[n - 1]) : null;
   const canPick = stage === 0 && acc.self && !!a;
   const last = hist[hist.length - 1];
+  const vt = a && a.version ? ' (v' + a.version + ')' : '';
+  const needFile = stage === 0 && acc.self && !!a && !a.file_id;
   let text;
   if (!no) text = 'Save the goals on Page 1 first. That creates the PMS number.';
   else if (!a) text = 'Save this form first, then send it for approval.';
-  else if (stage === 5) text = 'Approved on ' + fmtDate(last && last.at) + '.';
+  else if (needFile) text = 'Attach the PDF on Page 1 first (what you did on the tasks given by the company), then submit.';
+  else if (stage === 5) text = 'Approved on ' + fmtDate(last && last.at) + vt + '.';
   else if (stage === 0 && wasReturned) text = 'Sent back by ' + lastAct.by + ' on ' + fmtDate(lastAct.at) + ': ' + lastAct.note + (acc.self ? ' Make your changes and submit it again.' : '');
   else if (stage === 0) text = acc.self ? 'Choose the approvers and press Submit. The appraisal goes to L1 first.' : 'Not submitted yet. The employee has not sent it for approval.';
-  else if (mine) text = next ? 'This appraisal is with you. Add your part, then press Submit to send it to L' + next + ' (' + chain[next - 1].name + ').' : 'This appraisal is with you. Press Approve to approve it. This is the last step.';
-  else text = 'With L' + stage + ' ' + PMS_LEVEL_NAMES[stage - 1] + ' (' + (chain[stage - 1].name || 'nobody') + ') since ' + fmtDate(last && last.at) + '.';
+  else if (mine) text = next ? 'This appraisal is with you' + vt + '. Add your part, then press Submit to send it to L' + next + ' (' + chain[next - 1].name + ').' : 'This appraisal is with you' + vt + '. Press Approve to approve it. This is the last step.';
+  else text = 'With L' + stage + ' ' + PMS_LEVEL_NAMES[stage - 1] + ' (' + (chain[stage - 1].name || 'nobody') + ') since ' + fmtDate(last && last.at) + vt + '.';
   let options = null, settings = null;
   if (canPick) options = (await q(`SELECT id, name, COALESCE(email, '') AS email FROM users WHERE id <> $1 ORDER BY name`, [emp.id])).rows;
   if (actor.role === 'admin') {
     const us = (await q(`SELECT id, name, COALESCE(email, '') AS email, dept FROM users ORDER BY name`)).rows;
     settings = { chro: st.chro, fh: st.fh, depts: [...new Set(us.map((u) => u.dept))].sort(), users: us };
   }
-  return { stage, chain, steps, finalStatus: stage === 5 ? 'Approved' : '', canPick, canSubmit: (stage === 0 && acc.self && !!a) || mine, canReturn: mine, final: mine && !next, text, options, settings };
+  return { stage, chain, steps, finalStatus: stage === 5 ? 'Approved' : '', canPick, canSubmit: (stage === 0 && acc.self && !!a && !needFile) || mine, canReturn: mine, final: mine && !next, text, options, settings };
+}
+
+// ----- Versions: a copy of the form is kept each time a round ends (sent back, or approved) -----
+async function pmsSnapshot(a) {
+  const kras = (await q(`SELECT sno, kra, source, threshold, target, weight, timeline, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks FROM pms_kras WHERE appraisal_id = $1 ORDER BY sno`, [a.id])).rows;
+  const values = (await q(`SELECT ord, lvl, code, label, marks, self_ach AS "selfAch", mgr_ach AS "mgrAch", remarks FROM pms_value_rows WHERE appraisal_id = $1 ORDER BY ord`, [a.id])).rows;
+  const f = a.file_id ? (await q(`SELECT id, name, size FROM pms_files WHERE id = $1`, [a.file_id])).rows[0] : null;
+  return {
+    kras, values, valuesWeight: a.values_weight,
+    comments: { appraiser: a.cmt_appraiser, action: a.cmt_action, reviewer: a.cmt_reviewer, appraisee: a.cmt_appraisee, hr: a.cmt_hr },
+    file: f ? { id: Number(f.id), name: f.name, size: f.size } : null,
+  };
+}
+async function pmsCloseVersion(a, outcome, actorId, note) {
+  const snap = await pmsSnapshot(a);
+  const sub = (await q(`SELECT actor, at FROM pms_approvals WHERE appraisal_id = $1 AND action = 'submitted' ORDER BY id DESC LIMIT 1`, [a.id])).rows[0] || {};
+  await q(`INSERT INTO pms_versions (appraisal_id, version, submitted_at, submitted_by, outcome, ended_by, note, snapshot)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+           ON CONFLICT (appraisal_id, version) DO UPDATE SET outcome = EXCLUDED.outcome, ended_at = now(), ended_by = EXCLUDED.ended_by, note = EXCLUDED.note, snapshot = EXCLUDED.snapshot`,
+    [a.id, Math.max(1, a.version), sub.at || null, sub.actor || null, outcome, actorId, note || '', JSON.stringify(snap)]);
+}
+// Removes a PDF that is neither attached now nor kept by a saved version.
+async function pmsDropFileIfUnused(appraisalId, fileId) {
+  await q(`DELETE FROM pms_files f WHERE f.id = $2 AND f.appraisal_id = $1
+             AND NOT EXISTS (SELECT 1 FROM pms_appraisals p WHERE p.id = $1 AND p.file_id = $2)
+             AND NOT EXISTS (SELECT 1 FROM pms_versions v WHERE v.appraisal_id = $1 AND (v.snapshot->'file'->>'id')::bigint = $2)`, [appraisalId, fileId]);
 }
 
 // ----- e-mails for the approval flow -----
@@ -687,7 +720,7 @@ async function notifyPms(a, event, toId, by, note) {
     const emp = (await q(`SELECT name FROM users WHERE id = $1`, [a.emp])).rows[0] || { name: '' };
     const to = (await q(`SELECT name, COALESCE(email, '') AS email FROM users WHERE id = $1`, [toId])).rows[0];
     if (!to || !to.email) return;
-    const what = a.type + ' ' + a.year + ' (' + (a.cycle_no || a.id) + ')';
+    const what = a.type + ' ' + a.year + ' (' + (a.cycle_no || a.id) + (a.version ? ', v' + a.version : '') + ')';
     const link = '\n\nOpen Travel Desk: ' + appUrl() + '\n';
     let subject, body;
     if (event === 'waiting') {
@@ -718,6 +751,7 @@ route('POST', '/api/pms/approval/submit', async ({ actor, body }) => {
     const g = (await q(`SELECT count(*)::int AS n, COALESCE(sum(weight), 0) AS w FROM pms_kras WHERE appraisal_id = $1`, [a.id])).rows[0];
     if (!g.n) throw new HttpError(409, 'Save the KRA table on Page 1 before you submit.');
     if (Math.abs(Number(g.w) - 100) > 0.0001) throw new HttpError(409, 'The weightage total on Page 1 must be 100 before you submit (it is ' + Number(g.w) + ').');
+    if (!a.file_id) throw new HttpError(409, 'Attach the PDF on Page 1 before you submit (what you did on the tasks given by the company).');
     const st = await pmsApprovers();
     if (!st.chro) throw new HttpError(409, 'The CHRO has not been set yet. Ask the finance admin to set it at the bottom of Page 6.');
     const [l1, l2, l3] = [body.l1, body.l2, body.l3].map((v) => text(v, 20) || null);
@@ -727,10 +761,10 @@ route('POST', '/api/pms/approval/submit', async ({ actor, body }) => {
     if (chosen.includes(k.emp)) throw bad('You cannot be your own approver.');
     if ((await q(`SELECT id FROM users WHERE id = ANY($1::text[])`, [chosen])).rows.length !== chosen.length) throw bad('Choose the approvers from the list.');
     const l4 = st.chro !== k.emp && !chosen.includes(st.chro) ? st.chro : null;
-    const r = await q(`UPDATE pms_appraisals SET stage = 1, status = 'Submitted', l1 = $2, l2 = $3, l3 = $4, l4 = $5, submitted_at = now(), updated_at = now() WHERE id = $1 AND stage = 0`, [a.id, l1, l2, l3, l4]);
+    const r = await q(`UPDATE pms_appraisals SET stage = 1, status = 'Submitted', version = version + 1, l1 = $2, l2 = $3, l3 = $4, l4 = $5, submitted_at = now(), updated_at = now() WHERE id = $1 AND stage = 0`, [a.id, l1, l2, l3, l4]);
     if (!r.rowCount) throw changed();
     await q(`INSERT INTO pms_approvals (appraisal_id, level, actor, action) VALUES ($1, 0, $2, 'submitted')`, [a.id, actor.id]);
-    notifyPms(a, 'waiting', l1, actor.name);
+    notifyPms({ ...a, version: a.version + 1 }, 'waiting', l1, actor.name);
   } else {
     // An approver sends it on, or gives the final approval.
     const n = a.stage;
@@ -739,6 +773,7 @@ route('POST', '/api/pms/approval/submit', async ({ actor, body }) => {
     const r = await q(`UPDATE pms_appraisals SET stage = $2, status = $3, updated_at = now() WHERE id = $1 AND stage = $4`, [a.id, next || 5, next ? 'Submitted' : 'Approved', n]);
     if (!r.rowCount) throw changed();
     await q(`INSERT INTO pms_approvals (appraisal_id, level, actor, action, note) VALUES ($1, $2, $3, 'approved', $4)`, [a.id, n, actor.id, text(body.note, 1000)]);
+    if (!next) await pmsCloseVersion(a, 'Approved', actor.id, '');
     if (next) notifyPms(a, 'waiting', a['l' + next], actor.name);
     else notifyPms(a, 'approved', a.emp, actor.name);
   }
@@ -756,8 +791,67 @@ route('POST', '/api/pms/approval/return', async ({ actor, body }) => {
   const r = await q(`UPDATE pms_appraisals SET stage = 0, status = 'Draft', updated_at = now() WHERE id = $1 AND stage = $2`, [a.id, n]);
   if (!r.rowCount) throw new HttpError(409, 'Someone else just changed this appraisal. Reopen it and try again.');
   await q(`INSERT INTO pms_approvals (appraisal_id, level, actor, action, note) VALUES ($1, $2, $3, 'returned', $4)`, [a.id, n, actor.id, note]);
+  await pmsCloseVersion(a, 'Returned', actor.id, note);
   notifyPms(a, 'returned', a.emp, actor.name, note);
   return pmsPayload(actor, k.emp, k.type, k.year);
+});
+
+// ----- The PDF on Page 1: one per form, attached by the employee while the form is with them -----
+const PMS_MAX_PDF = 5 * 1024 * 1024;
+route('POST', '/api/pms/file/upload', async ({ actor, body }) => {
+  const k = pmsKey(body, actor);
+  const acc = await pmsAccess(actor, k.emp);
+  const no = await pmsNumber(k.emp, k.year);
+  if (!no) throw new HttpError(409, 'Save the goals on this page first (this creates the PMS number), then attach the PDF.');
+  let a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, file_id FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  const R = pmsRights(actor, acc, a);
+  if (!R.self) throw a && a.stage > 0 ? pmsNoEdit(a) : new HttpError(403, 'Only the employee can attach the PDF.');
+  const name = text(body.name, 200).replace(/[\\/\r\n"\x00-\x1f]/g, '_');
+  if (!/\.pdf$/i.test(name)) throw bad('Attach a PDF file.');
+  const buf = Buffer.from(String(body.data || ''), 'base64');
+  if (!buf.length) throw bad('The file is empty.');
+  if (buf.length > PMS_MAX_PDF) throw bad('The PDF must be 5 MB or smaller.');
+  if (buf.slice(0, 5).toString('latin1') !== '%PDF-') throw bad('The file content is not a PDF.');
+  if (!a) {
+    await q(`INSERT INTO pms_appraisals (id, emp, type, year, cycle_no) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (emp, type, year) DO NOTHING`, [no + '-' + PMS_TYPE_CODE[k.type], k.emp, k.type, k.year, no]);
+    a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, file_id FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  }
+  const f = (await q(`INSERT INTO pms_files (appraisal_id, name, size, data) VALUES ($1, $2, $3, $4) RETURNING id`, [a.id, name, buf.length, buf.toString('base64')])).rows[0];
+  await q(`UPDATE pms_appraisals SET file_id = $2, updated_at = now() WHERE id = $1`, [a.id, f.id]);
+  if (a.file_id) await pmsDropFileIfUnused(a.id, a.file_id);
+  return pmsPayload(actor, k.emp, k.type, k.year);
+});
+route('POST', '/api/pms/file/delete', async ({ actor, body }) => {
+  const k = pmsKey(body, actor);
+  const acc = await pmsAccess(actor, k.emp);
+  const a = (await q(`SELECT id, status, stage, l1, l2, l3, l4, file_id FROM pms_appraisals WHERE emp = $1 AND type = $2 AND year = $3`, [k.emp, k.type, k.year])).rows[0];
+  const R = pmsRights(actor, acc, a);
+  if (!R.self) throw a && a.stage > 0 ? pmsNoEdit(a) : new HttpError(403, 'Only the employee can remove the PDF.');
+  if (!a || !a.file_id) throw new HttpError(404, 'There is no PDF to remove.');
+  await q(`UPDATE pms_appraisals SET file_id = NULL, updated_at = now() WHERE id = $1`, [a.id]);
+  await pmsDropFileIfUnused(a.id, a.file_id);
+  return pmsPayload(actor, k.emp, k.type, k.year);
+});
+// Anyone who can open the form can download its PDF (the employee, the reporting manager, and everyone the form was sent to).
+route('GET', '/api/pms/file/:id', async ({ actor, params }) => {
+  const gone = () => new HttpError(404, 'File not found.');
+  if (!/^\d{1,18}$/.test(params.id)) throw gone();
+  const f = (await q(`SELECT f.name, f.data, p.emp FROM pms_files f JOIN pms_appraisals p ON p.id = f.appraisal_id WHERE f.id = $1::bigint`, [params.id])).rows[0];
+  if (!f) throw gone();
+  try { await pmsAccess(actor, f.emp); } catch (e) { throw gone(); }
+  return { raw: Buffer.from(f.data, 'base64'), mime: 'application/pdf', name: f.name, download: true };
+});
+// An earlier version of the form, as it stood when that round ended.
+route('POST', '/api/pms/version/open', async ({ actor, body }) => {
+  const k = pmsKey(body, actor);
+  await pmsAccess(actor, k.emp);
+  const n = parseInt(body.version, 10);
+  if (!(n >= 1)) throw bad('Choose a version.');
+  const v = (await q(`SELECT v.version, v.outcome, v.note, v.snapshot, v.submitted_at AS "submittedAt", v.ended_at AS "endedAt", su.name AS "submittedBy", eu.name AS "endedBy"
+                        FROM pms_versions v JOIN pms_appraisals a ON a.id = v.appraisal_id LEFT JOIN users su ON su.id = v.submitted_by LEFT JOIN users eu ON eu.id = v.ended_by
+                       WHERE a.emp = $1 AND a.type = $2 AND a.year = $3 AND v.version = $4`, [k.emp, k.type, k.year, n])).rows[0];
+  if (!v) throw new HttpError(404, 'That version is not available.');
+  return v;
 });
 
 // The Approval Center: everything that is waiting for the signed-in person right now, oldest first.
@@ -1015,7 +1109,7 @@ async function handleApi(req, res, pathname) {
     r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
     // A custom header cannot be sent by another site's form or image, which blocks cross-site requests.
     if (req.method !== 'GET' && req.headers['x-requested-with'] !== 'travel-desk') throw new HttpError(403, 'Request blocked.');
-    const body = req.method === 'GET' || req.method === 'DELETE' ? {} : await readBody(req, /^\/api\/claims\/[^/]+\/files$/.test(pathname) ? 8000000 : 100000);
+    const body = req.method === 'GET' || req.method === 'DELETE' ? {} : await readBody(req, /^\/api\/claims\/[^/]+\/files$/.test(pathname) || pathname === '/api/pms/file/upload' ? 8000000 : 100000);
     const session = pathname === '/api/health' ? null : await getSession(req);
     const actor = session ? session.user : null;
     if (!OPEN.has(pathname)) {
@@ -1024,7 +1118,7 @@ async function handleApi(req, res, pathname) {
     }
     const out = await r.handler({ actor, session, params, body, req, res });
     if (out && out.raw) {
-      res.writeHead(200, { 'Content-Type': out.mime, 'Content-Disposition': 'inline; filename="' + out.name + '"', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, no-store' });
+      res.writeHead(200, { 'Content-Type': out.mime, 'Content-Disposition': out.download ? 'attachment; filename="' + out.name.replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(out.name) : 'inline; filename="' + out.name + '"', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, no-store' });
       return res.end(out.raw);
     }
     return send(res, 200, out);
